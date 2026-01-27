@@ -1,6 +1,7 @@
 """主流程：从 Polymarket URL 获取 NBA 比赛数据"""
 
 import json
+import sys
 from typing import Optional
 
 from .parsers import parse_polymarket_url
@@ -91,10 +92,10 @@ def get_game_data_from_url(url: str, verbose: bool = True) -> Optional[GameData]
     return game_data
 
 
-def main():
+def main(url: Optional[str] = None):
     """主函数示例"""
     # 示例 URL
-    test_url = "https://polymarket.com/event/nba-orl-cle-2026-01-26"
+    test_url = url or "https://polymarket.com/event/nba-orl-cle-2026-01-26"
 
     print("=" * 60)
     print("Polymarket NBA 事件数据获取工具")
@@ -119,5 +120,6 @@ def main():
                   f"{player.stats['rebounds']}篮板 {player.stats['assists']}助攻")
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    cli_url = sys.argv[1] if len(sys.argv) > 1 else None
+    main(cli_url)

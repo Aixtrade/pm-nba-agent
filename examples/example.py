@@ -3,7 +3,7 @@
 from pm_nba_agent.main import get_game_data_from_url
 
 # Polymarket 比赛 URL
-url = "https://polymarket.com/event/nba-orl-cle-2026-01-26"
+url = "https://polymarket.com/event/nba-por-was-2026-01-27"
 
 # 获取比赛数据
 game_data = get_game_data_from_url(url, verbose=False)
