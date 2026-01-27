@@ -1,0 +1,14 @@
+[project]
+name = "pm-nba-agent"
+version = "0.1.0"
+description = "PM NBA Agent - 专门实时分析 NBA 的 AI Agent"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "nba-api>=1.11.3",
+    "pandas>=3.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
