@@ -1,86 +1,120 @@
 # PM NBA Agent
 
-专门实时分析 NBA 的 AI Agent，从 Polymarket 事件 URL 解析 NBA 比赛信息，并通过 nba_api 获取实时比赛数据。
+[中文文档](./README_CN.md) | English
 
-## 安装
+[![Python Version](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-使用 uv 管理虚拟环境和依赖：
+A specialized AI agent for real-time NBA game analysis. Parse NBA game information from Polymarket event URLs and fetch live game data via nba_api, with built-in LLM-powered game analysis and prediction capabilities.
+
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Core Modules](#core-modules)
+  - [Game Data Module](#game-data-module)
+  - [AI Analysis Module](#ai-analysis-module)
+- [Configuration](#configuration)
+- [Examples](#examples)
+- [Project Structure](#project-structure)
+- [Data Models](#data-models)
+- [Development](#development)
+- [Important Notes](#important-notes)
+- [License](#license)
+
+## Features
+
+- **URL Parsing**: Extract team abbreviations and game dates from Polymarket URLs
+- **Team Resolution**: Query full team information by abbreviation
+- **Game Finder**: Locate game IDs by teams and dates
+- **Live Data**: Fetch real-time game statistics, scores, and play-by-play
+- **AI Analysis**: LLM-powered real-time game analysis and predictions
+  - Automatic event detection (score changes, lead changes, big plays)
+  - Streaming analysis output
+  - Configurable analysis intervals
+  - Smart event-triggered analysis
+- **Data Models**: Strongly-typed game data structures with serialization support
+
+## Installation
+
+Use [uv](https://github.com/astral-sh/uv) for dependency management:
 
 ```bash
-# 创建虚拟环境并安装依赖
+# Create virtual environment and install dependencies
 uv sync
 
-# 或者手动创建虚拟环境
+# Or manually create virtual environment
 uv venv
 source .venv/bin/activate  # Linux/macOS
 
-# 安装依赖
-uv add nba_api pandas
+# Install dependencies
+uv add nba_api pandas openai
 ```
 
-## 快速开始
+## Quick Start
+
+### Basic Game Data
 
 ```python
 from pm_nba_agent.main import get_game_data_from_url
 
-# 从 Polymarket URL 获取比赛数据
+# Fetch game data from Polymarket URL
 url = "https://polymarket.com/event/nba-orl-cle-2026-01-26"
 game_data = get_game_data_from_url(url)
 
-# 访问比赛信息
-print(f"比赛状态: {game_data.game_info.status}")
+# Access game information
+print(f"Status: {game_data.game_info.status}")
 print(f"{game_data.away_team.name}: {game_data.away_team.score}")
 print(f"{game_data.home_team.name}: {game_data.home_team.score}")
 
-# 转换为字典格式
+# Convert to dictionary
 data_dict = game_data.to_dict()
 ```
 
-## 运行示例
+### AI-Powered Analysis
 
-```bash
-# 基础示例
-python examples/example.py
+```python
+import asyncio
+from pm_nba_agent.agent import GameAnalyzer, GameContext, AnalysisConfig
 
-# 详细用法
-python examples/basic_usage.py
+async def analyze_game():
+    # Configure analyzer (reads from environment variables by default)
+    config = AnalysisConfig(
+        api_key="your-openai-api-key",
+        model="gpt-4o-mini",
+        analysis_interval=30.0,  # Normal analysis interval (seconds)
+        event_interval=15.0      # Event-triggered interval (seconds)
+    )
 
-# 高级示例（批量查询）
-python examples/advanced_usage.py
+    analyzer = GameAnalyzer(config)
+    context = GameContext(game_id="0022600123")
 
-# 球员数据分析
-python examples/player_stats_analysis.py
+    # Update context with game data
+    context.update_scoreboard({
+        "status": "Live - Q3",
+        "period": 3,
+        "game_clock": "7:23",
+        "home_team": {"name": "Lakers", "score": 78},
+        "away_team": {"name": "Warriors", "score": 82}
+    })
+
+    # Stream analysis
+    if analyzer.should_analyze(context):
+        async for chunk in analyzer.analyze_stream(context):
+            print(chunk, end="", flush=True)
+
+    await analyzer.close()
+
+asyncio.run(analyze_game())
 ```
 
-## 项目结构
+## Core Modules
 
-```
-PM_NBA_Agent/
-├── pm_nba_agent/          # 核心库
-│   ├── parsers/               # URL 解析
-│   │   └── polymarket_parser.py
-│   ├── nba/                   # NBA 数据获取
-│   │   ├── team_resolver.py   # 球队信息
-│   │   ├── game_finder.py     # 比赛查找
-│   │   └── live_stats.py      # 实时数据
-│   ├── models/                # 数据模型
-│   │   └── game_data.py
-│   └── main.py                # 主流程
-├── examples/                   # 使用示例
-│   ├── example.py             # 简单示例
-│   ├── basic_usage.py         # 基础用法
-│   ├── advanced_usage.py      # 高级用法
-│   └── player_stats_analysis.py  # 数据分析
-├── tests/                      # 测试脚本
-│   ├── test_today_games.py    # 今日比赛
-│   └── test_full_flow.py      # 完整流程测试
-├── pyproject.toml             # 项目配置
-└── README.md                   # 项目文档
-```
+### Game Data Module
 
-## 核心功能
-
-### 1. URL 解析
+#### 1. URL Parsing
 
 ```python
 from pm_nba_agent.parsers import parse_polymarket_url
@@ -93,7 +127,7 @@ print(event_info.team2_abbr)  # 'CLE'
 print(event_info.game_date)   # '2026-01-26'
 ```
 
-### 2. 球队信息查询
+#### 2. Team Information
 
 ```python
 from pm_nba_agent.nba import get_team_info
@@ -103,7 +137,7 @@ print(team.full_name)  # 'Orlando Magic'
 print(team.nickname)   # 'Magic'
 ```
 
-### 3. 比赛查找
+#### 3. Game Finder
 
 ```python
 from pm_nba_agent.nba import find_game_by_teams_and_date
@@ -112,7 +146,7 @@ game_id = find_game_by_teams_and_date('ORL', 'CLE', '2026-01-26')
 print(game_id)  # '0022600123'
 ```
 
-### 4. 实时数据获取
+#### 4. Live Game Data
 
 ```python
 from pm_nba_agent.nba import get_live_game_data
@@ -122,24 +156,179 @@ print(game_data.game_info.status)  # 'Live - Q3'
 print(game_data.home_team.score)   # 89
 ```
 
-## 数据结构
+### AI Analysis Module
+
+The AI analysis module provides intelligent real-time game analysis powered by LLMs.
+
+#### Key Components
+
+- **GameAnalyzer**: Main analyzer with streaming support
+- **GameContext**: Maintains game state and detects significant events
+- **LLMClient**: Async OpenAI client with retry logic
+- **AnalysisConfig**: Configuration management with environment variable support
+
+#### Event Detection
+
+The analyzer automatically detects:
+
+- **Score Runs**: 5+ point scoring runs
+- **Lead Changes**: When teams exchange the lead
+- **Period Transitions**: Quarter/overtime changes
+- **Three-Pointers**: Made three-point shots
+- **Dunks**: Dunk plays
+
+#### Analysis Triggers
+
+- **Time-based**: Regular intervals (default 30 seconds)
+- **Event-based**: Shorter intervals when significant events occur (default 15 seconds)
+- **First analysis**: Triggers as soon as data is available
+
+## Configuration
+
+The AI analysis module can be configured via environment variables or code:
+
+### Environment Variables
+
+```bash
+# OpenAI Configuration
+export OPENAI_API_KEY="sk-..."
+export OPENAI_BASE_URL="https://api.openai.com/v1"  # Optional
+export OPENAI_MODEL="gpt-4o-mini"  # Default model
+
+# Analysis Intervals (seconds)
+export ANALYSIS_INTERVAL="30"        # Normal interval
+export ANALYSIS_EVENT_INTERVAL="15"  # Event-triggered interval
+```
+
+### Programmatic Configuration
+
+```python
+from pm_nba_agent.agent import AnalysisConfig
+
+config = AnalysisConfig(
+    api_key="your-api-key",
+    base_url="https://api.openai.com/v1",
+    model="gpt-4o-mini",
+    analysis_interval=30.0,
+    event_interval=15.0,
+    max_tokens=1024,
+    temperature=0.7
+)
+```
+
+## Examples
+
+Run the included examples:
+
+```bash
+# Basic example
+python examples/example.py
+
+# Detailed usage
+python examples/basic_usage.py
+
+# Advanced usage (batch queries)
+python examples/advanced_usage.py
+
+# Player stats analysis
+python examples/player_stats_analysis.py
+
+# Or use uv to run
+uv run python examples/example.py
+```
+
+## Project Structure
+
+```
+PM_NBA_Agent/
+├── pm_nba_agent/              # Core library
+│   ├── parsers/               # URL parsing
+│   │   └── polymarket_parser.py
+│   ├── nba/                   # NBA data fetching
+│   │   ├── team_resolver.py   # Team information
+│   │   ├── game_finder.py     # Game finder
+│   │   └── live_stats.py      # Live data
+│   ├── models/                # Data models
+│   │   └── game_data.py
+│   ├── agent/                 # AI analysis module
+│   │   ├── analyzer.py        # Game analyzer
+│   │   ├── context.py         # Game context manager
+│   │   ├── llm_client.py      # OpenAI client
+│   │   ├── models.py          # Analysis models
+│   │   └── prompts.py         # Prompt templates
+│   └── main.py                # Main orchestration
+├── examples/                  # Usage examples
+│   ├── example.py
+│   ├── basic_usage.py
+│   ├── advanced_usage.py
+│   └── player_stats_analysis.py
+├── tests/                     # Test scripts
+│   ├── test_today_games.py
+│   └── test_full_flow.py
+├── pyproject.toml            # Project configuration
+├── README.md                 # Documentation (English)
+└── README_CN.md              # Documentation (Chinese)
+```
+
+## Data Models
 
 ### GameData
 
-完整的比赛数据，包含：
+Complete game data structure:
 
-- `game_info`: 比赛基本信息（game_id, 日期, 状态, 节数, 比赛时钟）
-- `home_team`: 主队统计（名称, 缩写, 比分, 详细统计）
-- `away_team`: 客队统计
-- `players`: 球员列表（姓名, 球队, 位置, 是否在场, 详细统计）
+- `game_info`: Basic game info (game_id, date, status, period, clock)
+- `home_team`: Home team statistics (name, abbreviation, score, detailed stats)
+- `away_team`: Away team statistics
+- `players`: Player list (name, team, position, on_court status, detailed stats)
 
-## 注意事项
+### GameContext
 
-1. **API 限流**: 代码已内置请求延迟 (0.6秒)，避免被 NBA API 限流
-2. **比赛时间**: Live API 适用于当天比赛，历史或未来比赛使用 Stats API
-3. **时区**: NBA 比赛时间为美国东部时间 (EST/EDT)
-4. **比赛状态**: 1=未开始, 2=进行中, 3=已结束
+Manages game state for analysis:
+
+- Tracks scoreboard, boxscore, and play-by-play updates
+- Detects significant events automatically
+- Determines optimal analysis timing
+- Maintains analysis history
+
+### AnalysisConfig
+
+Configuration for the analyzer:
+
+- OpenAI API settings (key, base_url, model)
+- Analysis timing (intervals, event triggers)
+- LLM parameters (max_tokens, temperature)
+
+## Development
+
+### Running Tests
+
+```bash
+# Tests are script-based, not pytest
+python tests/test_today_games.py
+python tests/test_full_flow.py
+
+# Using uv
+uv run python tests/test_today_games.py
+```
+
+### Building the Package
+
+```bash
+python -m build
+```
+
+## Important Notes
+
+1. **API Rate Limiting**: Built-in 0.6-second delays between requests to avoid NBA API rate limits
+2. **Game Timing**: Live API works for current day games; use Stats API for historical/future games
+3. **Time Zone**: NBA game times are in US Eastern Time (EST/EDT)
+4. **Game Status Codes**: 1=Scheduled, 2=Live, 3=Final
+5. **AI Analysis**: Requires valid OpenAI API key; falls back gracefully if not configured
 
 ## License
 
-MIT
+MIT License - see [LICENSE](./LICENSE) file for details.
+
+---
+
+**Note**: This project uses nba_api for data access. Please respect NBA's data usage policies and API rate limits.
