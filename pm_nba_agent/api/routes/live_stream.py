@@ -7,10 +7,26 @@ from pydantic import ValidationError
 from ..models.requests import LiveStreamRequest
 from ..services.data_fetcher import DataFetcher
 from ..services.game_stream import GameStreamService
+from ..services.auth import get_auth_config, is_token_valid
 from ...agent import GameAnalyzer
 
 
 router = APIRouter(prefix="/api/v1/live", tags=["live"])
+
+
+def require_auth(request: Request) -> None:
+    passphrase, salt = get_auth_config()
+
+    if not passphrase:
+        raise HTTPException(status_code=500, detail="Auth 配置缺失")
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="缺少访问令牌")
+
+    provided = auth_header.removeprefix("Bearer ").strip()
+    if not is_token_valid(provided, passphrase, salt):
+        raise HTTPException(status_code=401, detail="访问令牌无效")
 
 
 @router.post("/stream")
@@ -50,6 +66,8 @@ async def stream_game_data(
       -d '{"url":"https://polymarket.com/event/nba-por-was-2026-01-27"}'
     ```
     """
+    require_auth(request)
+
     # 获取全局资源
     fetcher: DataFetcher = request.app.state.fetcher
     analyzer: GameAnalyzer = request.app.state.analyzer

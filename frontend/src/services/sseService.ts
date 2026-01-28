@@ -11,7 +11,7 @@ export class SSEService {
     this.handlers = handlers
   }
 
-  async connect(request: LiveStreamRequest): Promise<void> {
+  async connect(request: LiveStreamRequest, token?: string): Promise<void> {
     // 先断开已有连接
     this.disconnect()
 
@@ -19,11 +19,17 @@ export class SSEService {
 
     const url = `${API_BASE_URL}/api/v1/live/stream`
 
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    }
+
+    if (token) {
+      headers.Authorization = `Bearer ${token}`
+    }
+
     await fetchEventSource(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({
         url: request.url,
         poll_interval: request.poll_interval ?? 10,

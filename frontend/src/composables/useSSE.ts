@@ -1,11 +1,12 @@
 import { onUnmounted } from 'vue'
 import { sseService } from '@/services/sseService'
-import { useConnectionStore, useGameStore } from '@/stores'
+import { useAuthStore, useConnectionStore, useGameStore } from '@/stores'
 import type { LiveStreamRequest } from '@/types/sse'
 
 export function useSSE() {
   const connectionStore = useConnectionStore()
   const gameStore = useGameStore()
+  const authStore = useAuthStore()
 
   // 设置事件处理器
   sseService.setHandlers({
@@ -39,12 +40,23 @@ export function useSSE() {
   })
 
   async function connect(request: LiveStreamRequest) {
+    if (!authStore.isAuthenticated) {
+      connectionStore.setError({
+        code: 'AUTH_REQUIRED',
+        message: '请先登录再连接数据流',
+        recoverable: false,
+        timestamp: new Date().toISOString(),
+      })
+      connectionStore.setStatus('error')
+      return
+    }
+
     connectionStore.setStatus('connecting')
     gameStore.reset()
     connectionStore.clearError()
 
     try {
-      await sseService.connect(request)
+      await sseService.connect(request, authStore.token)
     } catch (error) {
       connectionStore.setStatus('error')
       connectionStore.setError({

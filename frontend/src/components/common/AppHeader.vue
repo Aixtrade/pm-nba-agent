@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useSSE } from '@/composables/useSSE'
+import { useAuthStore } from '@/stores'
 import type { LiveStreamRequest } from '@/types/sse'
 import StreamConfig from '@/components/monitor/StreamConfig.vue'
 import ConnectionStatus from './ConnectionStatus.vue'
 
+const router = useRouter()
 const { connect, disconnect } = useSSE()
 const isConfigOpen = ref(false)
+const authStore = useAuthStore()
 
 function handleConnect(request: LiveStreamRequest) {
   connect(request)
@@ -15,6 +19,12 @@ function handleConnect(request: LiveStreamRequest) {
 
 function handleDisconnect() {
   disconnect()
+}
+
+function handleLogout() {
+  handleDisconnect()
+  authStore.logout()
+  router.push({ name: 'login' })
 }
 </script>
 
@@ -27,10 +37,28 @@ function handleDisconnect() {
         </RouterLink>
         <ConnectionStatus />
       </div>
-      <div class="flex-none">
-        <button class="btn btn-outline btn-sm" @click="isConfigOpen = true">
+      <div class="flex-none flex items-center gap-2">
+        <button
+          v-if="authStore.isAuthenticated"
+          class="btn btn-outline btn-sm"
+          @click="isConfigOpen = true"
+        >
           比赛列表
         </button>
+        <button
+          v-if="authStore.isAuthenticated"
+          class="btn btn-ghost btn-sm"
+          @click="handleLogout"
+        >
+          退出
+        </button>
+        <RouterLink
+          v-else
+          class="btn btn-primary btn-sm"
+          to="/login"
+        >
+          登录
+        </RouterLink>
       </div>
     </div>
   </header>

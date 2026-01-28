@@ -73,3 +73,26 @@ class ParsePolymarketRequest(BaseModel):
         if 'polymarket.com' not in v.lower():
             raise ValueError('URL 必须是 Polymarket 链接')
         return v
+
+
+class LoginRequest(BaseModel):
+    """登录请求"""
+
+    passphrase: str = Field(
+        ...,
+        description="登录口令",
+        examples=["your-passphrase"]
+    )
+
+
+class LoginResponse(BaseModel):
+    """登录响应"""
+
+    token: str = Field(
+        ...,
+        description="访问令牌"
+    )
+    token_type: str = Field(
+        default="Bearer",
+        description="令牌类型"
+    )

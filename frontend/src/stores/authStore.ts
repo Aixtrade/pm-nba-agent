@@ -1,0 +1,77 @@
+import { defineStore } from 'pinia'
+import { computed, ref } from 'vue'
+
+const AUTH_TOKEN_KEY = 'pm_nba_agent_auth_token'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
+
+function getStoredToken(): string {
+  if (typeof window === 'undefined') return ''
+  return localStorage.getItem(AUTH_TOKEN_KEY) || ''
+}
+
+function setStoredToken(token: string) {
+  if (typeof window === 'undefined') return
+  if (token) {
+    localStorage.setItem(AUTH_TOKEN_KEY, token)
+  } else {
+    localStorage.removeItem(AUTH_TOKEN_KEY)
+  }
+}
+
+export const useAuthStore = defineStore('auth', () => {
+  const token = ref<string>(getStoredToken())
+  const lastError = ref<string | null>(null)
+
+  const isAuthenticated = computed(() => token.value.length > 0)
+
+  async function login(passphrase: string): Promise<boolean> {
+    lastError.value = null
+
+    if (!passphrase) {
+      lastError.value = '请输入口令'
+      return false
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ passphrase }),
+      })
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null)
+        lastError.value = data?.detail || '登录失败'
+        return false
+      }
+
+      const data = await response.json()
+      token.value = data.token || ''
+      if (!token.value) {
+        lastError.value = '登录失败：未返回令牌'
+        return false
+      }
+      setStoredToken(token.value)
+      return true
+    } catch (error) {
+      lastError.value = error instanceof Error ? error.message : '登录失败'
+      return false
+    }
+  }
+
+  function logout() {
+    token.value = ''
+    lastError.value = null
+    setStoredToken('')
+  }
+
+  return {
+    token,
+    lastError,
+    isAuthenticated,
+    login,
+    logout,
+  }
+})
