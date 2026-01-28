@@ -35,6 +35,16 @@ class LiveStreamRequest(BaseModel):
         le=100,
         description="首次逐回合数据条数，范围 1-100"
     )
+    enable_analysis: bool = Field(
+        default=True,
+        description="是否启用 AI 实时分析"
+    )
+    analysis_interval: float = Field(
+        default=30.0,
+        ge=10.0,
+        le=120.0,
+        description="AI 分析间隔（秒），范围 10-120"
+    )
 
     @field_validator('url')
     @classmethod

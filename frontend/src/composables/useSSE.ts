@@ -24,6 +24,9 @@ export function useSSE() {
     onPlayByPlay: (data) => {
       gameStore.setPlayByPlay(data)
     },
+    onAnalysisChunk: (data) => {
+      gameStore.appendAnalysisChunk(data)
+    },
     onHeartbeat: (data) => {
       connectionStore.setHeartbeat(data.timestamp)
     },

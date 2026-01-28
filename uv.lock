@@ -691,6 +691,7 @@ dependencies = [
     { name = "openai" },
     { name = "pandas" },
     { name = "pocketflow" },
+    { name = "python-dotenv" },
 ]
 
 [package.metadata]
@@ -700,6 +701,7 @@ requires-dist = [
     { name = "openai", specifier = ">=2.15.0" },
     { name = "pandas", specifier = ">=3.0.0" },
     { name = "pocketflow", specifier = ">=0.0.3" },
+    { name = "python-dotenv", specifier = ">=1.2.1" },
 ]
 
 [[package]]

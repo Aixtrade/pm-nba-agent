@@ -118,3 +118,25 @@ class GameEndEvent(SSEEvent):
             "away_team": away_team_name,
             "timestamp": datetime.utcnow().isoformat(),
         })
+
+
+@dataclass
+class AnalysisChunkEvent(SSEEvent):
+    """AI 分析流式事件"""
+    event_type: str = field(default="analysis_chunk", init=False)
+
+    @classmethod
+    def create(
+        cls,
+        game_id: str,
+        chunk: str,
+        is_final: bool = False,
+        round_number: int = 0,
+    ) -> "AnalysisChunkEvent":
+        return cls(data={
+            "game_id": game_id,
+            "chunk": chunk,
+            "is_final": is_final,
+            "round": round_number,
+            "timestamp": datetime.utcnow().isoformat(),
+        })

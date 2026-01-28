@@ -13,8 +13,10 @@ from ..models.events import (
     HeartbeatEvent,
     ErrorEvent,
     GameEndEvent,
+    AnalysisChunkEvent,
 )
 from .data_fetcher import DataFetcher
+from ...agent import GameAnalyzer, GameContext
 
 
 @dataclass
@@ -28,8 +30,9 @@ class StreamState:
 class GameStreamService:
     """比赛数据流服务"""
 
-    def __init__(self, fetcher: DataFetcher):
+    def __init__(self, fetcher: DataFetcher, analyzer: Optional[GameAnalyzer] = None):
         self._fetcher = fetcher
+        self._analyzer = analyzer
 
     async def create_stream(
         self,
@@ -73,12 +76,42 @@ class GameStreamService:
         game_id = game_result.data
         state = StreamState(game_id=game_id)
 
+        # 创建比赛上下文
+        context = GameContext(game_id=game_id)
+
         # 3. 进入轮询循环
         while not state.is_game_ended:
             try:
                 # 获取并推送各类数据
-                async for event in self._fetch_and_emit(request, state):
+                async for event in self._fetch_and_emit(request, state, context):
                     yield event
+
+                if state.is_game_ended:
+                    break
+
+                # 触发 AI 分析
+                if request.enable_analysis and self._analyzer is not None:
+                    # 使用请求参数中的分析间隔
+                    should_run = self._analyzer.is_enabled() and context.should_analyze(
+                        normal_interval=request.analysis_interval,
+                        event_interval=min(request.analysis_interval / 2, 15.0),
+                    )
+                    if should_run:
+                        round_number = context.analysis_round + 1
+                        async for chunk in self._analyzer.analyze_stream(context):
+                            yield AnalysisChunkEvent.create(
+                                game_id=game_id,
+                                chunk=chunk,
+                                is_final=False,
+                                round_number=round_number,
+                            ).to_sse()
+                        # 发送分析结束标记
+                        yield AnalysisChunkEvent.create(
+                            game_id=game_id,
+                            chunk="",
+                            is_final=True,
+                            round_number=round_number,
+                        ).to_sse()
 
                 # 发送心跳
                 yield HeartbeatEvent.create().to_sse()
@@ -101,7 +134,8 @@ class GameStreamService:
     async def _fetch_and_emit(
         self,
         request: LiveStreamRequest,
-        state: StreamState
+        state: StreamState,
+        context: GameContext,
     ) -> AsyncGenerator[str, None]:
         """获取数据并生成事件"""
 
@@ -110,21 +144,33 @@ class GameStreamService:
             scoreboard_result = await self._fetcher.get_scoreboard(state.game_id)
             if scoreboard_result.success:
                 summary = scoreboard_result.data
+                scoreboard_data = {
+                    'game_id': summary['game_id'],
+                    'status': summary['status'],
+                    'period': summary['period'],
+                    'game_clock': summary['game_clock'],
+                    'home_team': {
+                        'name': summary['home_team']['name'],
+                        'abbreviation': summary['home_team']['abbreviation'],
+                        'score': summary['home_team']['score'],
+                    },
+                    'away_team': {
+                        'name': summary['away_team']['name'],
+                        'abbreviation': summary['away_team']['abbreviation'],
+                        'score': summary['away_team']['score'],
+                    },
+                }
+
+                # 更新上下文
+                context.update_scoreboard(scoreboard_data)
+
                 yield ScoreboardEvent.create(
                     game_id=summary['game_id'],
                     status=summary['status'],
                     period=summary['period'],
                     game_clock=summary['game_clock'],
-                    home_team={
-                        'name': summary['home_team']['name'],
-                        'abbreviation': summary['home_team']['abbreviation'],
-                        'score': summary['home_team']['score'],
-                    },
-                    away_team={
-                        'name': summary['away_team']['name'],
-                        'abbreviation': summary['away_team']['abbreviation'],
-                        'score': summary['away_team']['score'],
-                    },
+                    home_team=scoreboard_data['home_team'],
+                    away_team=scoreboard_data['away_team'],
                 ).to_sse()
 
                 # 检测比赛结束
@@ -150,7 +196,12 @@ class GameStreamService:
             boxscore_result = await self._fetcher.get_boxscore(state.game_id)
             if boxscore_result.success:
                 game_data = boxscore_result.data
-                yield BoxscoreEvent.create(game_data.to_dict()).to_sse()
+                boxscore_dict = game_data.to_dict()
+
+                # 更新上下文
+                context.update_boxscore(boxscore_dict)
+
+                yield BoxscoreEvent.create(boxscore_dict).to_sse()
 
                 # 如果没有 scoreboard 数据，也检测比赛结束
                 if not request.include_scoreboard:
@@ -193,6 +244,10 @@ class GameStreamService:
                     state.last_action_number = max(
                         a['action_number'] for a in actions
                     )
+
+                    # 更新上下文
+                    context.update_playbyplay(actions)
+
                     yield PlayByPlayEvent.create(
                         game_id=state.game_id,
                         actions=actions

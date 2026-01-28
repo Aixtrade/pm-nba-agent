@@ -76,6 +76,9 @@ export class SSEService {
         case 'playbyplay':
           this.handlers.onPlayByPlay?.(parsed)
           break
+        case 'analysis_chunk':
+          this.handlers.onAnalysisChunk?.(parsed)
+          break
         case 'heartbeat':
           this.handlers.onHeartbeat?.(parsed)
           break

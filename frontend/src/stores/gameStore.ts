@@ -1,6 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { ScoreboardEventData, BoxscoreEventData, PlayByPlayEventData, GameEndEventData } from '@/types/sse'
+import type {
+  ScoreboardEventData,
+  BoxscoreEventData,
+  PlayByPlayEventData,
+  GameEndEventData,
+  AnalysisChunkEventData,
+} from '@/types/sse'
 import type { PlayAction } from '@/types'
 
 export const useGameStore = defineStore('game', () => {
@@ -9,6 +15,7 @@ export const useGameStore = defineStore('game', () => {
   const boxscore = ref<BoxscoreEventData | null>(null)
   const playByPlayActions = ref<PlayAction[]>([])
   const gameEndData = ref<GameEndEventData | null>(null)
+  const analysisChunks = ref<AnalysisChunkEventData[]>([])
 
   // 计算属性
   const gameId = computed(() => scoreboard.value?.game_id ?? boxscore.value?.game_info.game_id ?? null)
@@ -81,11 +88,20 @@ export const useGameStore = defineStore('game', () => {
     gameEndData.value = data
   }
 
+  function appendAnalysisChunk(data: AnalysisChunkEventData) {
+    analysisChunks.value = [...analysisChunks.value, data]
+  }
+
+  function clearAnalysis() {
+    analysisChunks.value = []
+  }
+
   function reset() {
     scoreboard.value = null
     boxscore.value = null
     playByPlayActions.value = []
     gameEndData.value = null
+    analysisChunks.value = []
   }
 
   return {
@@ -94,6 +110,7 @@ export const useGameStore = defineStore('game', () => {
     boxscore,
     playByPlayActions,
     gameEndData,
+    analysisChunks,
     // 计算属性
     gameId,
     gameStatus,
@@ -107,6 +124,8 @@ export const useGameStore = defineStore('game', () => {
     setBoxscore,
     setPlayByPlay,
     setGameEnd,
+    appendAnalysisChunk,
+    clearAnalysis,
     reset,
   }
 })

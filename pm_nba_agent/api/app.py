@@ -1,25 +1,41 @@
 """FastAPI 应用入口"""
 
 from contextlib import asynccontextmanager
+from pathlib import Path
+
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .routes.live_stream import router as live_stream_router
 from .services.data_fetcher import DataFetcher
+from ..agent import GameAnalyzer, AnalysisConfig
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    root_dir = Path(__file__).resolve().parents[2]
+    load_dotenv(dotenv_path=root_dir / ".env", override=False)
+
     # 启动时初始化资源
     app.state.fetcher = DataFetcher(max_workers=3)
     print("DataFetcher 已初始化")
 
+    # 初始化分析器
+    config = AnalysisConfig()
+    app.state.analyzer = GameAnalyzer(config)
+    if config.is_configured():
+        print(f"GameAnalyzer 已初始化 (模型: {config.model})")
+    else:
+        print("GameAnalyzer 未配置 API Key，AI 分析功能不可用")
+
     yield
 
     # 关闭时清理资源
+    await app.state.analyzer.close()
     app.state.fetcher.shutdown()
-    print("DataFetcher 已关闭")
+    print("资源已关闭")
 
 
 app = FastAPI(

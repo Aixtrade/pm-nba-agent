@@ -47,6 +47,15 @@ export interface HeartbeatEventData {
   timestamp: string
 }
 
+// AnalysisChunk 事件数据
+export interface AnalysisChunkEventData {
+  game_id: string
+  chunk: string
+  is_final: boolean
+  round: number
+  timestamp: string
+}
+
 // Error 事件数据
 export interface ErrorEventData {
   code: string
@@ -72,6 +81,7 @@ export type SSEEventType =
   | 'scoreboard'
   | 'boxscore'
   | 'playbyplay'
+  | 'analysis_chunk'
   | 'heartbeat'
   | 'error'
   | 'game_end'
@@ -81,6 +91,7 @@ export interface SSEEventHandlers {
   onScoreboard?: (data: ScoreboardEventData) => void
   onBoxscore?: (data: BoxscoreEventData) => void
   onPlayByPlay?: (data: PlayByPlayEventData) => void
+  onAnalysisChunk?: (data: AnalysisChunkEventData) => void
   onHeartbeat?: (data: HeartbeatEventData) => void
   onError?: (data: ErrorEventData) => void
   onGameEnd?: (data: GameEndEventData) => void

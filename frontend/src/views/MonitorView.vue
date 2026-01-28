@@ -7,6 +7,7 @@ import ScoreBoard from '@/components/monitor/ScoreBoard.vue'
 import BoxScore from '@/components/monitor/BoxScore.vue'
 import PlayerStatsTable from '@/components/monitor/PlayerStatsTable.vue'
 import PlayByPlay from '@/components/monitor/PlayByPlay.vue'
+import AgentAnalysisPanel from '@/components/monitor/AgentAnalysisPanel.vue'
 
 const { connect, disconnect } = useSSE()
 const connectionStore = useConnectionStore()
@@ -47,28 +48,36 @@ function handleDisconnect() {
     </div>
 
     <!-- 数据展示区域 -->
-    <template v-if="connectionStore.isConnected || gameStore.scoreboard || gameStore.boxscore">
-      <!-- 比分板 -->
-      <ScoreBoard />
+    <div
+      v-if="connectionStore.isConnected || gameStore.scoreboard || gameStore.boxscore"
+      class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-6 items-start"
+    >
+      <div class="space-y-6">
+        <!-- 比分板 -->
+        <ScoreBoard />
 
-      <!-- 球队统计 -->
-      <BoxScore />
+        <!-- 球队统计 -->
+        <BoxScore />
 
-      <!-- 球员统计 -->
-      <div v-if="gameStore.boxscore" class="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <PlayerStatsTable
-          :title="`${gameStore.awayTeam?.name ?? '客队'} 球员统计`"
-          :players="gameStore.awayPlayers"
-        />
-        <PlayerStatsTable
-          :title="`${gameStore.homeTeam?.name ?? '主队'} 球员统计`"
-          :players="gameStore.homePlayers"
-        />
+        <!-- 球员统计 -->
+        <div v-if="gameStore.boxscore" class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <PlayerStatsTable
+            :title="`${gameStore.awayTeam?.name ?? '客队'} 球员统计`"
+            :players="gameStore.awayPlayers"
+          />
+          <PlayerStatsTable
+            :title="`${gameStore.homeTeam?.name ?? '主队'} 球员统计`"
+            :players="gameStore.homePlayers"
+          />
+        </div>
+
+        <!-- 逐回合 -->
+        <PlayByPlay />
       </div>
 
-      <!-- 逐回合 -->
-      <PlayByPlay />
-    </template>
+      <!-- Agent 分析侧边栏 -->
+      <AgentAnalysisPanel />
+    </div>
 
     <!-- 未连接时的占位提示 -->
     <div

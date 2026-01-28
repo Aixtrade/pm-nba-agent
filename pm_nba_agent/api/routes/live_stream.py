@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from ..models.requests import LiveStreamRequest
 from ..services.data_fetcher import DataFetcher
 from ..services.game_stream import GameStreamService
+from ...agent import GameAnalyzer
 
 
 router = APIRouter(prefix="/api/v1/live", tags=["live"])
@@ -29,11 +30,14 @@ async def stream_game_data(
     - `include_boxscore`: 是否包含详细统计（默认 true）
     - `include_playbyplay`: 是否包含逐回合（默认 true）
     - `playbyplay_limit`: 首次逐回合数据条数（1-100，默认20）
+    - `enable_analysis`: 是否启用 AI 分析（默认 true）
+    - `analysis_interval`: AI 分析间隔（10-120秒，默认30秒）
 
     **事件类型**:
     - `scoreboard`: 比分板数据
     - `boxscore`: 详细统计数据
     - `playbyplay`: 逐回合数据（增量推送）
+    - `analysis_chunk`: AI 分析流式输出
     - `heartbeat`: 心跳保活
     - `error`: 错误事件
     - `game_end`: 比赛结束
@@ -46,11 +50,12 @@ async def stream_game_data(
       -d '{"url":"https://polymarket.com/event/nba-por-was-2026-01-27"}'
     ```
     """
-    # 获取全局 fetcher
+    # 获取全局资源
     fetcher: DataFetcher = request.app.state.fetcher
+    analyzer: GameAnalyzer = request.app.state.analyzer
 
     # 创建流服务
-    stream_service = GameStreamService(fetcher)
+    stream_service = GameStreamService(fetcher, analyzer)
 
     async def event_generator():
         async for event in stream_service.create_stream(body):
