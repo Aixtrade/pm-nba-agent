@@ -29,7 +29,7 @@ function handleDisconnect() {
       </div>
       <div class="flex-none">
         <button class="btn btn-outline btn-sm" @click="isConfigOpen = true">
-          监控配置
+          比赛列表
         </button>
       </div>
     </div>

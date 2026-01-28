@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .routes.live_stream import router as live_stream_router
+from .routes.parse import router as parse_router
 from .services.data_fetcher import DataFetcher
 from ..agent import GameAnalyzer, AnalysisConfig
 
@@ -56,6 +57,7 @@ app.add_middleware(
 
 # 注册路由
 app.include_router(live_stream_router)
+app.include_router(parse_router)
 
 
 @app.get("/health")

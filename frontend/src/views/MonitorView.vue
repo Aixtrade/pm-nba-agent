@@ -72,7 +72,7 @@ const gameStore = useGameStore()
         </svg>
         <h2 class="text-xl font-semibold text-base-content/60 mt-4">NBA 实时监控</h2>
         <p class="text-base-content/40 max-w-md">
-          输入 Polymarket 比赛 URL 开始实时监控 NBA 比赛数据。
+          在比赛列表中添加 Polymarket 比赛 URL，开始实时监控 NBA 比赛数据。
           系统将自动获取比分、球队统计、球员数据和逐回合信息。
         </p>
       </div>

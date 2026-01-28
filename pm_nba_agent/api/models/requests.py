@@ -54,3 +54,22 @@ class LiveStreamRequest(BaseModel):
         if 'polymarket.com' not in v.lower():
             raise ValueError('URL 必须是 Polymarket 链接')
         return v
+
+
+class ParsePolymarketRequest(BaseModel):
+    """Polymarket URL 解析请求"""
+
+    url: str = Field(
+        ...,
+        description="Polymarket 事件 URL",
+        examples=["https://polymarket.com/event/nba-por-was-2026-01-27"]
+    )
+
+    @field_validator('url')
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        if not v.startswith('http'):
+            raise ValueError('URL 必须以 http 或 https 开头')
+        if 'polymarket.com' not in v.lower():
+            raise ValueError('URL 必须是 Polymarket 链接')
+        return v
