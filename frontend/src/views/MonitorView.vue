@@ -64,14 +64,14 @@ const gameStore = useGameStore()
     <!-- 未连接时的占位提示 -->
     <div
       v-else-if="!connectionStore.isConnecting"
-      class="card bg-base-100 shadow-md"
+      class="card empty-card"
     >
-      <div class="card-body items-center text-center py-12">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-base-content/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <div class="card-body items-center text-center py-12 empty-card__body">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 empty-card__icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
         </svg>
-        <h2 class="text-xl font-semibold text-base-content/60 mt-4">NBA 实时监控</h2>
-        <p class="text-base-content/40 max-w-md">
+        <h2 class="text-xl font-semibold empty-card__title">NBA 实时监控</h2>
+        <p class="empty-card__subtitle">
           在比赛列表中添加 Polymarket 比赛 URL，开始实时监控 NBA 比赛数据。
           系统将自动获取比分、球队统计、球员数据和逐回合信息。
         </p>
@@ -79,3 +79,30 @@ const gameStore = useGameStore()
     </div>
   </div>
 </template>
+
+<style scoped>
+.empty-card {
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.empty-card__body {
+  gap: 12px;
+}
+
+.empty-card__icon {
+  color: rgba(15, 23, 42, 0.32);
+}
+
+.empty-card__title {
+  color: rgba(15, 23, 42, 0.72);
+}
+
+.empty-card__subtitle {
+  max-width: 520px;
+  color: rgba(15, 23, 42, 0.48);
+}
+</style>

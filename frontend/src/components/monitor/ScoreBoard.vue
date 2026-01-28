@@ -28,7 +28,7 @@ const statusClass = computed(() => {
 </script>
 
 <template>
-  <div v-if="gameStore.homeTeam && gameStore.awayTeam" class="card bg-base-100 shadow-md">
+  <div v-if="gameStore.homeTeam && gameStore.awayTeam" class="card glass-card">
     <div class="card-body">
       <!-- 比赛状态 -->
       <div class="flex justify-center items-center gap-4 mb-4">
@@ -71,7 +71,7 @@ const statusClass = computed(() => {
   </div>
 
   <!-- 无数据占位 -->
-  <div v-else class="card bg-base-100 shadow-md">
+  <div v-else class="card glass-card">
     <div class="card-body items-center text-center text-base-content/50">
       <p>等待比赛数据...</p>
     </div>

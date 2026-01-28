@@ -29,7 +29,7 @@ function handleLogout() {
 </script>
 
 <template>
-  <header class="navbar bg-base-100 shadow-md">
+  <header class="navbar app-header">
     <div class="w-full px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4 flex-nowrap">
       <div class="flex-1 min-w-0 flex items-center gap-3 flex-nowrap">
         <RouterLink to="/" class="btn btn-ghost text-xl font-bold">
@@ -81,3 +81,13 @@ function handleLogout() {
     </form>
   </dialog>
 </template>
+
+<style scoped>
+.app-header {
+  background: rgba(255, 255, 255, 0.78);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+</style>

@@ -119,7 +119,7 @@ watch(
 </script>
 
 <template>
-  <div class="card bg-base-100 shadow-md">
+  <div class="card glass-card">
     <div class="card-body">
       <div class="flex items-start justify-between gap-4">
         <div class="flex flex-wrap items-center gap-2">

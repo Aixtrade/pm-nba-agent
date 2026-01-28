@@ -13,7 +13,7 @@ function getPeriodLabel(period: number): string {
 </script>
 
 <template>
-  <div class="card bg-base-100 shadow-md">
+  <div class="card glass-card">
     <div class="card-body">
       <h3 class="card-title">
         逐回合

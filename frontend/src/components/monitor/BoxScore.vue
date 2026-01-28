@@ -28,7 +28,7 @@ function formatPct(value: number): string {
 </script>
 
 <template>
-  <div v-if="gameStore.boxscore" class="card bg-base-100 shadow-md">
+  <div v-if="gameStore.boxscore" class="card glass-card">
     <div class="card-body">
       <h3 class="card-title">球队统计</h3>
 

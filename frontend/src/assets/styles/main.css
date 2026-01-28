@@ -31,3 +31,12 @@ html, body, #app {
 .table th {
   white-space: nowrap;
 }
+
+/* 轻量玻璃卡片 */
+.glass-card {
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
