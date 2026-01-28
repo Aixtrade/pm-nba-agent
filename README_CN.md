@@ -39,6 +39,27 @@
 
 ## 安装
 
+### 方式一：Docker（推荐用于生产环境）
+
+最简单的方式部署完整应用（后端 + 前端）：
+
+```bash
+# 1. 配置环境变量
+cp .env.example .env
+# 编辑 .env 填入你的 API Key
+
+# 2. 构建并启动服务
+docker compose up -d
+
+# 3. 访问应用
+# 前端界面: http://localhost
+# API 文档: http://localhost/api/docs
+```
+
+详细的 Docker 部署指南请参考 [DOCKER.md](./DOCKER.md)。
+
+### 方式二：本地开发
+
 使用 [uv](https://github.com/astral-sh/uv) 管理依赖：
 
 ```bash

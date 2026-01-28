@@ -39,6 +39,27 @@ A specialized AI agent for real-time NBA game analysis. Parse NBA game informati
 
 ## Installation
 
+### Option 1: Docker (Recommended for Production)
+
+The easiest way to deploy the full application (backend + frontend):
+
+```bash
+# 1. Configure environment variables
+cp .env.example .env
+# Edit .env with your API keys
+
+# 2. Build and start services
+docker compose up -d
+
+# 3. Access the application
+# Frontend: http://localhost
+# API docs: http://localhost/api/docs
+```
+
+See [DOCKER.md](./DOCKER.md) for detailed Docker deployment guide.
+
+### Option 2: Local Development
+
 Use [uv](https://github.com/astral-sh/uv) for dependency management:
 
 ```bash
