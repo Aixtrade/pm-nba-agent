@@ -5,7 +5,7 @@ import AppHeader from '@/components/common/AppHeader.vue'
 <template>
   <div class="min-h-screen bg-base-200 flex flex-col">
     <AppHeader />
-    <main class="flex-1 container mx-auto px-4 py-6">
+    <main class="flex-1 w-full px-4 py-6">
       <RouterView />
     </main>
   </div>

@@ -1,35 +1,17 @@
 <script setup lang="ts">
-import { useSSE } from '@/composables/useSSE'
 import { useConnectionStore, useGameStore } from '@/stores'
-import type { LiveStreamRequest } from '@/types/sse'
-import StreamConfig from '@/components/monitor/StreamConfig.vue'
 import ScoreBoard from '@/components/monitor/ScoreBoard.vue'
 import BoxScore from '@/components/monitor/BoxScore.vue'
 import PlayerStatsTable from '@/components/monitor/PlayerStatsTable.vue'
 import PlayByPlay from '@/components/monitor/PlayByPlay.vue'
 import AgentAnalysisPanel from '@/components/monitor/AgentAnalysisPanel.vue'
 
-const { connect, disconnect } = useSSE()
 const connectionStore = useConnectionStore()
 const gameStore = useGameStore()
-
-function handleConnect(request: LiveStreamRequest) {
-  connect(request)
-}
-
-function handleDisconnect() {
-  disconnect()
-}
 </script>
 
 <template>
   <div class="space-y-6">
-    <!-- 配置区域 -->
-    <StreamConfig
-      @connect="handleConnect"
-      @disconnect="handleDisconnect"
-    />
-
     <!-- 错误提示 -->
     <div
       v-if="connectionStore.lastError"
@@ -50,7 +32,7 @@ function handleDisconnect() {
     <!-- 数据展示区域 -->
     <div
       v-if="connectionStore.isConnected || gameStore.scoreboard || gameStore.boxscore"
-      class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-6 items-start"
+      class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_440px] gap-6 items-start"
     >
       <div class="space-y-6">
         <!-- 比分板 -->
