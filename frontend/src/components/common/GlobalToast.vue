@@ -60,7 +60,7 @@ function closeToast(id: number) {
   padding: 10px 14px;
   border-radius: 12px;
   border: 1px solid transparent;
-  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.2);
   font-size: 13px;
   font-weight: 600;
   pointer-events: auto;
@@ -69,21 +69,21 @@ function closeToast(id: number) {
 }
 
 .toast-card--success {
-  background: rgba(240, 253, 244, 0.92);
-  color: #15803d;
-  border-color: rgba(22, 163, 74, 0.25);
+  background: rgba(22, 163, 74, 0.18);
+  color: #166534;
+  border-color: rgba(22, 163, 74, 0.55);
 }
 
 .toast-card--error {
-  background: rgba(254, 242, 242, 0.94);
-  color: #b91c1c;
-  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.18);
+  color: #991b1b;
+  border-color: rgba(239, 68, 68, 0.55);
 }
 
 .toast-card--info {
-  background: rgba(248, 250, 252, 0.95);
-  color: #334155;
-  border-color: rgba(148, 163, 184, 0.35);
+  background: rgba(148, 163, 184, 0.22);
+  color: #1f2937;
+  border-color: rgba(148, 163, 184, 0.55);
 }
 
 .toast-message {
@@ -106,13 +106,18 @@ function closeToast(id: number) {
 
 .toast-enter-active,
 .toast-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition: opacity 0.34s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .toast-enter-from,
 .toast-leave-to {
   opacity: 0;
-  transform: translateY(-8px) scale(0.98);
+  transform: translateY(-12px) scale(0.96);
+}
+
+.toast-leave-active {
+  transition: opacity 0.24s ease-in, transform 0.24s ease-in;
 }
 
 @media (prefers-reduced-motion: reduce) {
