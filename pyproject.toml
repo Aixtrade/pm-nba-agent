@@ -10,7 +10,9 @@ dependencies = [
     "openai>=2.15.0",
     "pandas>=3.0.0",
     "pocketflow>=0.0.3",
+    "py-clob-client>=0.34.5",
     "python-dotenv>=1.2.1",
+    "websocket-client>=1.9.0",
 ]
 
 [build-system]

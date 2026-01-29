@@ -88,6 +88,12 @@ export class SSEService {
         case 'heartbeat':
           this.handlers.onHeartbeat?.(parsed)
           break
+        case 'polymarket_info':
+          this.handlers.onPolymarketInfo?.(parsed)
+          break
+        case 'polymarket_book':
+          this.handlers.onPolymarketBook?.(parsed)
+          break
         case 'error':
           this.handlers.onError?.(parsed)
           break

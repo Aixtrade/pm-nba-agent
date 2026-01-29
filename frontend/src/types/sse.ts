@@ -77,6 +77,37 @@ export interface GameEndEventData {
   timestamp: string
 }
 
+// Polymarket 事件数据
+export interface PolymarketInfoEventData {
+  event_id: string
+  title: string
+  interval: string
+  asset: string
+  condition_id?: string | null
+  tokens: Array<{
+    token_id: string
+    outcome: string
+    condition_id: string
+    market_slug: string
+  }>
+  market_info?: {
+    slug: string
+    question?: string | null
+    description?: string | null
+    condition_id?: string | null
+    outcomes: string[]
+    clob_token_ids: string[]
+    market_id?: string | null
+    raw_data?: Record<string, unknown> | null
+  } | null
+  event_data?: Record<string, unknown> | null
+}
+
+// Polymarket Book 事件数据
+export interface PolymarketBookEventData {
+  [key: string]: unknown
+}
+
 // SSE 事件类型
 export type SSEEventType =
   | 'scoreboard'
@@ -84,6 +115,8 @@ export type SSEEventType =
   | 'playbyplay'
   | 'analysis_chunk'
   | 'heartbeat'
+  | 'polymarket_info'
+  | 'polymarket_book'
   | 'error'
   | 'game_end'
 
@@ -94,6 +127,8 @@ export interface SSEEventHandlers {
   onPlayByPlay?: (data: PlayByPlayEventData) => void
   onAnalysisChunk?: (data: AnalysisChunkEventData) => void
   onHeartbeat?: (data: HeartbeatEventData) => void
+  onPolymarketInfo?: (data: PolymarketInfoEventData) => void
+  onPolymarketBook?: (data: PolymarketBookEventData) => void
   onError?: (data: ErrorEventData) => void
   onGameEnd?: (data: GameEndEventData) => void
   onOpen?: () => void

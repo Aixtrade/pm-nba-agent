@@ -7,6 +7,8 @@ from .events import (
     BoxscoreEvent,
     PlayByPlayEvent,
     HeartbeatEvent,
+    PolymarketInfoEvent,
+    PolymarketBookEvent,
     ErrorEvent,
     GameEndEvent,
 )
@@ -18,6 +20,8 @@ __all__ = [
     'BoxscoreEvent',
     'PlayByPlayEvent',
     'HeartbeatEvent',
+    'PolymarketInfoEvent',
+    'PolymarketBookEvent',
     'ErrorEvent',
     'GameEndEvent',
 ]

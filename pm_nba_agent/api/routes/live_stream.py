@@ -50,6 +50,8 @@ async def stream_game_data(
     - `analysis_interval`: AI 分析间隔（10-120秒，默认30秒）
 
     **事件类型**:
+    - `polymarket_info`: Polymarket 市场信息
+    - `polymarket_book`: Polymarket 订单簿消息
     - `scoreboard`: 比分板数据
     - `boxscore`: 详细统计数据
     - `playbyplay`: 逐回合数据（增量推送）

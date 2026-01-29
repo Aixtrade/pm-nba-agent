@@ -1,9 +1,9 @@
 """比赛数据流服务"""
 
 import asyncio
-from datetime import datetime
-from typing import AsyncGenerator, Optional
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, AsyncGenerator, Optional
 
 from ..models.requests import LiveStreamRequest
 from ..models.events import (
@@ -12,6 +12,8 @@ from ..models.events import (
     BoxscoreEvent,
     PlayByPlayEvent,
     HeartbeatEvent,
+    PolymarketInfoEvent,
+    PolymarketBookEvent,
     ErrorEvent,
     GameEndEvent,
     AnalysisChunkEvent,
@@ -20,6 +22,9 @@ from .data_fetcher import DataFetcher
 from ...agent import GameAnalyzer, GameContext
 from ...nba.team_resolver import get_team_info
 from ...parsers.polymarket_parser import PolymarketEventInfo
+from ...polymarket.resolver import MarketResolver
+from ...polymarket.book_stream import PolymarketBookStream
+from ...polymarket.models import EventInfo
 from ...models.game_data import GameData
 
 
@@ -77,109 +82,177 @@ class GameStreamService:
             ).to_sse()
             return
 
-        # 2. 查找比赛（未开赛时保持连接并提示）
-        pending_notice_sent = False
-        game_id: Optional[str] = None
-        while game_id is None:
-            game_result = await self._fetcher.find_game(
-                event_info.team1_abbr,
-                event_info.team2_abbr,
-                event_info.game_date
-            )
-            if game_result.success:
-                game_id = game_result.data
-                break
+        polymarket_book_stream: Optional[PolymarketBookStream] = None
+        polymarket_book_queue: Optional[asyncio.Queue[dict[str, Any]]] = None
 
-            if _is_future_or_today(event_info.game_date):
-                if request.include_scoreboard and not pending_notice_sent:
-                    placeholder = _build_placeholder_scoreboard(event_info)
-                    status_message = _build_status_message(placeholder.get("status", ""))
-                    yield ScoreboardEvent.create(
-                        game_id=placeholder["game_id"],
-                        status=placeholder["status"],
-                        period=placeholder["period"],
-                        game_clock=placeholder["game_clock"],
-                        home_team=placeholder["home_team"],
-                        away_team=placeholder["away_team"],
-                        status_message=status_message,
-                    ).to_sse()
-                    pending_notice_sent = True
-
-                yield HeartbeatEvent.create().to_sse()
-                await asyncio.sleep(request.poll_interval)
-                continue
-
-            yield ErrorEvent.create(
-                code="GAME_NOT_FOUND",
-                message=game_result.error or "比赛未找到",
-                recoverable=False
-            ).to_sse()
-            return
-        if game_id is None:
-            return
-
-        state = StreamState(game_id=game_id)
-
-        # 创建比赛上下文
-        context = GameContext(game_id=game_id)
-
-        # 3. 进入轮询循环
-        while not state.is_game_ended:
+        try:
             try:
-                # 获取并推送各类数据
-                async for event in self._fetch_and_emit(request, state, context):
-                    yield event
+                print(f"Polymarket 解析开始: {request.url}")
+                polymarket_event = await MarketResolver.resolve_event(request.url)
+                if polymarket_event:
+                    print(
+                        "Polymarket 解析完成: "
+                        f"event_id={polymarket_event.event_id} "
+                        f"condition_id={polymarket_event.condition_id} "
+                        f"tokens={len(polymarket_event.tokens)} "
+                        f"has_market_info={polymarket_event.market_info is not None} "
+                        f"has_event_data={polymarket_event.event_data is not None}"
+                    )
+                    yield PolymarketInfoEvent.create(
+                        polymarket_event.to_dict()
+                    ).to_sse()
 
-                if state.is_game_ended:
+                    asset_ids = _collect_polymarket_asset_ids(polymarket_event)
+                    if asset_ids:
+                        polymarket_book_stream = PolymarketBookStream()
+                        started = await polymarket_book_stream.start(asset_ids)
+                        if started:
+                            polymarket_book_queue = polymarket_book_stream.queue
+                            print(
+                                "Polymarket WebSocket 已订阅 book: "
+                                f"tokens={len(asset_ids)}"
+                            )
+                        else:
+                            print("Polymarket WebSocket 订阅失败")
+                else:
+                    print("Polymarket 解析失败: 无返回结果")
+                    yield ErrorEvent.create(
+                        code="POLYMARKET_INFO_MISSING",
+                        message="未获取到 Polymarket 市场信息",
+                        recoverable=True,
+                    ).to_sse()
+            except Exception as exc:
+                print(f"Polymarket 解析异常: {exc}")
+                yield ErrorEvent.create(
+                    code="POLYMARKET_INFO_ERROR",
+                    message=str(exc),
+                    recoverable=True,
+                ).to_sse()
+
+            # 2. 查找比赛（未开赛时保持连接并提示）
+            pending_notice_sent = False
+            game_id: Optional[str] = None
+            while game_id is None:
+                game_result = await self._fetcher.find_game(
+                    event_info.team1_abbr,
+                    event_info.team2_abbr,
+                    event_info.game_date
+                )
+                if game_result.success:
+                    game_id = game_result.data
                     break
 
-                # 触发 AI 分析
-                if request.enable_analysis and self._analyzer is not None:
-                    # 使用请求参数中的分析间隔
-                    should_run = self._analyzer.is_enabled() and context.should_analyze(
-                        normal_interval=request.analysis_interval,
-                        event_interval=min(request.analysis_interval / 2, 15.0),
-                    )
-                    if should_run:
-                        round_number = context.analysis_round + 1
-                        async for chunk in self._analyzer.analyze_stream(context):
+                if _is_future_or_today(event_info.game_date):
+                    if request.include_scoreboard and not pending_notice_sent:
+                        placeholder = _build_placeholder_scoreboard(event_info)
+                        status_message = _build_status_message(placeholder.get("status", ""))
+                        yield ScoreboardEvent.create(
+                            game_id=placeholder["game_id"],
+                            status=placeholder["status"],
+                            period=placeholder["period"],
+                            game_clock=placeholder["game_clock"],
+                            home_team=placeholder["home_team"],
+                            away_team=placeholder["away_team"],
+                            status_message=status_message,
+                        ).to_sse()
+                        pending_notice_sent = True
+
+                    if polymarket_book_queue:
+                        async for book_event in _drain_polymarket_book_queue(
+                            polymarket_book_queue
+                        ):
+                            yield book_event
+
+                    yield HeartbeatEvent.create().to_sse()
+                    await asyncio.sleep(request.poll_interval)
+                    continue
+
+                yield ErrorEvent.create(
+                    code="GAME_NOT_FOUND",
+                    message=game_result.error or "比赛未找到",
+                    recoverable=False
+                ).to_sse()
+                return
+            if game_id is None:
+                return
+
+            state = StreamState(game_id=game_id)
+
+            # 创建比赛上下文
+            context = GameContext(game_id=game_id)
+
+            # 3. 进入轮询循环
+            while not state.is_game_ended:
+                try:
+                    # 获取并推送各类数据
+                    async for event in self._fetch_and_emit(
+                        request,
+                        state,
+                        context,
+                        polymarket_book_queue,
+                    ):
+                        yield event
+
+                    if state.is_game_ended:
+                        break
+
+                    # 触发 AI 分析
+                    if request.enable_analysis and self._analyzer is not None:
+                        # 使用请求参数中的分析间隔
+                        should_run = self._analyzer.is_enabled() and context.should_analyze(
+                            normal_interval=request.analysis_interval,
+                            event_interval=min(request.analysis_interval / 2, 15.0),
+                        )
+                        if should_run:
+                            round_number = context.analysis_round + 1
+                            async for chunk in self._analyzer.analyze_stream(context):
+                                yield AnalysisChunkEvent.create(
+                                    game_id=game_id,
+                                    chunk=chunk,
+                                    is_final=False,
+                                    round_number=round_number,
+                                ).to_sse()
+                            # 发送分析结束标记
                             yield AnalysisChunkEvent.create(
                                 game_id=game_id,
-                                chunk=chunk,
-                                is_final=False,
+                                chunk="",
+                                is_final=True,
                                 round_number=round_number,
                             ).to_sse()
-                        # 发送分析结束标记
-                        yield AnalysisChunkEvent.create(
-                            game_id=game_id,
-                            chunk="",
-                            is_final=True,
-                            round_number=round_number,
-                        ).to_sse()
 
-                # 发送心跳
-                yield HeartbeatEvent.create().to_sse()
+                    # 发送心跳
+                    if polymarket_book_queue:
+                        async for book_event in _drain_polymarket_book_queue(
+                            polymarket_book_queue
+                        ):
+                            yield book_event
 
-                # 等待下一次轮询
-                await asyncio.sleep(request.poll_interval)
+                    yield HeartbeatEvent.create().to_sse()
 
-            except asyncio.CancelledError:
-                # 客户端断开连接
-                break
-            except Exception as e:
-                # 发送可恢复错误，继续轮询
-                yield ErrorEvent.create(
-                    code="FETCH_ERROR",
-                    message=str(e),
-                    recoverable=True
-                ).to_sse()
-                await asyncio.sleep(request.poll_interval)
+                    # 等待下一次轮询
+                    await asyncio.sleep(request.poll_interval)
+
+                except asyncio.CancelledError:
+                    # 客户端断开连接
+                    break
+                except Exception as e:
+                    # 发送可恢复错误，继续轮询
+                    yield ErrorEvent.create(
+                        code="FETCH_ERROR",
+                        message=str(e),
+                        recoverable=True
+                    ).to_sse()
+                    await asyncio.sleep(request.poll_interval)
+        finally:
+            if polymarket_book_stream:
+                await polymarket_book_stream.close()
 
     async def _fetch_and_emit(
         self,
         request: LiveStreamRequest,
         state: StreamState,
         context: GameContext,
+        polymarket_book_queue: Optional[asyncio.Queue[dict[str, Any]]] = None,
     ) -> AsyncGenerator[str, None]:
         """获取数据并生成事件"""
 
@@ -320,6 +393,12 @@ class GameStreamService:
                     recoverable=True
                 ).to_sse()
 
+        if polymarket_book_queue:
+            async for book_event in _drain_polymarket_book_queue(
+                polymarket_book_queue
+            ):
+                yield book_event
+
 
 def _build_status_message(status: str) -> Optional[str]:
     if not status:
@@ -363,3 +442,33 @@ def _build_placeholder_scoreboard(event_info: PolymarketEventInfo) -> dict:
             "score": 0,
         },
     }
+
+
+def _collect_polymarket_asset_ids(event_info: EventInfo) -> list[str]:
+    token_ids = [token.token_id for token in event_info.tokens if token.token_id]
+    if token_ids:
+        return list(dict.fromkeys(token_ids))
+    if event_info.market_info:
+        return [
+            token_id
+            for token_id in event_info.market_info.clob_token_ids
+            if token_id
+        ]
+    return []
+
+
+async def _drain_polymarket_book_queue(
+    queue: asyncio.Queue[dict[str, Any]]
+) -> AsyncGenerator[str, None]:
+    while True:
+        try:
+            message = queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+
+        payload: dict[str, Any]
+        if isinstance(message, dict):
+            payload = message
+        else:
+            payload = {"raw": message}
+        yield PolymarketBookEvent.create(payload).to_sse()

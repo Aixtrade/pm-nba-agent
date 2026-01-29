@@ -82,6 +82,28 @@ class HeartbeatEvent(SSEEvent):
 
 
 @dataclass
+class PolymarketInfoEvent(SSEEvent):
+    """Polymarket 事件信息"""
+
+    event_type: str = field(default="polymarket_info", init=False)
+
+    @classmethod
+    def create(cls, event_info: dict) -> "PolymarketInfoEvent":
+        return cls(data=event_info)
+
+
+@dataclass
+class PolymarketBookEvent(SSEEvent):
+    """Polymarket 订单簿事件"""
+
+    event_type: str = field(default="polymarket_book", init=False)
+
+    @classmethod
+    def create(cls, payload: dict) -> "PolymarketBookEvent":
+        return cls(data=payload)
+
+
+@dataclass
 class ErrorEvent(SSEEvent):
     """错误事件"""
     event_type: str = field(default="error", init=False)
