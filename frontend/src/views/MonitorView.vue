@@ -12,23 +12,6 @@ const gameStore = useGameStore()
 
 <template>
   <div class="space-y-6">
-    <!-- 错误提示 -->
-    <div
-      v-if="connectionStore.lastError"
-      class="alert alert-error"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
-      </svg>
-      <div>
-        <h3 class="font-bold">{{ connectionStore.lastError.code }}</h3>
-        <p class="text-sm">{{ connectionStore.lastError.message }}</p>
-      </div>
-      <button class="btn btn-sm btn-ghost" @click="connectionStore.clearError">
-        关闭
-      </button>
-    </div>
-
     <!-- 数据展示区域 -->
     <div
       v-if="connectionStore.isConnected || gameStore.scoreboard || gameStore.boxscore"

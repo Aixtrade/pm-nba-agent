@@ -1,6 +1,7 @@
 """比赛数据流服务"""
 
 import asyncio
+from datetime import datetime
 from typing import AsyncGenerator, Optional
 from dataclasses import dataclass
 
@@ -17,6 +18,9 @@ from ..models.events import (
 )
 from .data_fetcher import DataFetcher
 from ...agent import GameAnalyzer, GameContext
+from ...nba.team_resolver import get_team_info
+from ...parsers.polymarket_parser import PolymarketEventInfo
+from ...models.game_data import GameData
 
 
 @dataclass
@@ -58,22 +62,62 @@ class GameStreamService:
             return
 
         event_info = url_result.data
+        if event_info is None:
+            yield ErrorEvent.create(
+                code="URL_PARSE_ERROR",
+                message="URL 解析失败",
+                recoverable=False
+            ).to_sse()
+            return
+        if not isinstance(event_info, PolymarketEventInfo):
+            yield ErrorEvent.create(
+                code="URL_PARSE_ERROR",
+                message="URL 解析失败",
+                recoverable=False
+            ).to_sse()
+            return
 
-        # 2. 查找比赛
-        game_result = await self._fetcher.find_game(
-            event_info.team1_abbr,
-            event_info.team2_abbr,
-            event_info.game_date
-        )
-        if not game_result.success:
+        # 2. 查找比赛（未开赛时保持连接并提示）
+        pending_notice_sent = False
+        game_id: Optional[str] = None
+        while game_id is None:
+            game_result = await self._fetcher.find_game(
+                event_info.team1_abbr,
+                event_info.team2_abbr,
+                event_info.game_date
+            )
+            if game_result.success:
+                game_id = game_result.data
+                break
+
+            if _is_future_or_today(event_info.game_date):
+                if request.include_scoreboard and not pending_notice_sent:
+                    placeholder = _build_placeholder_scoreboard(event_info)
+                    status_message = _build_status_message(placeholder.get("status", ""))
+                    yield ScoreboardEvent.create(
+                        game_id=placeholder["game_id"],
+                        status=placeholder["status"],
+                        period=placeholder["period"],
+                        game_clock=placeholder["game_clock"],
+                        home_team=placeholder["home_team"],
+                        away_team=placeholder["away_team"],
+                        status_message=status_message,
+                    ).to_sse()
+                    pending_notice_sent = True
+
+                yield HeartbeatEvent.create().to_sse()
+                await asyncio.sleep(request.poll_interval)
+                continue
+
             yield ErrorEvent.create(
                 code="GAME_NOT_FOUND",
                 message=game_result.error or "比赛未找到",
                 recoverable=False
             ).to_sse()
             return
+        if game_id is None:
+            return
 
-        game_id = game_result.data
         state = StreamState(game_id=game_id)
 
         # 创建比赛上下文
@@ -144,6 +188,14 @@ class GameStreamService:
             scoreboard_result = await self._fetcher.get_scoreboard(state.game_id)
             if scoreboard_result.success:
                 summary = scoreboard_result.data
+                if summary is None or not isinstance(summary, dict):
+                    yield ErrorEvent.create(
+                        code="SCOREBOARD_ERROR",
+                        message="获取比分失败",
+                        recoverable=True
+                    ).to_sse()
+                    return
+                status_message = _build_status_message(summary.get("status", ""))
                 scoreboard_data = {
                     'game_id': summary['game_id'],
                     'status': summary['status'],
@@ -159,6 +211,7 @@ class GameStreamService:
                         'abbreviation': summary['away_team']['abbreviation'],
                         'score': summary['away_team']['score'],
                     },
+                    'status_message': status_message,
                 }
 
                 # 更新上下文
@@ -171,6 +224,7 @@ class GameStreamService:
                     game_clock=summary['game_clock'],
                     home_team=scoreboard_data['home_team'],
                     away_team=scoreboard_data['away_team'],
+                    status_message=status_message,
                 ).to_sse()
 
                 # 检测比赛结束
@@ -196,6 +250,13 @@ class GameStreamService:
             boxscore_result = await self._fetcher.get_boxscore(state.game_id)
             if boxscore_result.success:
                 game_data = boxscore_result.data
+                if game_data is None or not isinstance(game_data, GameData):
+                    yield ErrorEvent.create(
+                        code="BOXSCORE_ERROR",
+                        message="获取统计失败",
+                        recoverable=True
+                    ).to_sse()
+                    return
                 boxscore_dict = game_data.to_dict()
 
                 # 更新上下文
@@ -258,3 +319,47 @@ class GameStreamService:
                     message=pbp_result.error or "获取逐回合数据失败",
                     recoverable=True
                 ).to_sse()
+
+
+def _build_status_message(status: str) -> Optional[str]:
+    if not status:
+        return None
+
+    normalized = status.lower()
+    if "scheduled" in normalized or "pre" in normalized or "未开始" in status:
+        return "比赛尚未开始，系统将保持连接并在开赛前开始推送实时数据。"
+
+    return None
+
+
+def _is_future_or_today(game_date: str) -> bool:
+    try:
+        target_date = datetime.strptime(game_date, "%Y-%m-%d").date()
+    except ValueError:
+        return False
+
+    return target_date >= datetime.utcnow().date()
+
+
+def _build_placeholder_scoreboard(event_info: PolymarketEventInfo) -> dict:
+    away_abbr = event_info.team1_abbr
+    home_abbr = event_info.team2_abbr
+    away_team = get_team_info(away_abbr)
+    home_team = get_team_info(home_abbr)
+
+    return {
+        "game_id": f"pending-{away_abbr}-{home_abbr}-{event_info.game_date}",
+        "status": "Scheduled",
+        "period": 0,
+        "game_clock": "",
+        "home_team": {
+            "name": home_team.full_name if home_team else home_abbr,
+            "abbreviation": home_abbr,
+            "score": 0,
+        },
+        "away_team": {
+            "name": away_team.full_name if away_team else away_abbr,
+            "abbreviation": away_abbr,
+            "score": 0,
+        },
+    }

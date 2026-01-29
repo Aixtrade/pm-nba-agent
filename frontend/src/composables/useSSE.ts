@@ -32,7 +32,8 @@ export function useSSE() {
       connectionStore.setHeartbeat(data.timestamp)
     },
     onError: (data) => {
-      connectionStore.setError(data)
+      console.warn('SSE Error:', data)
+      connectionStore.setStatus('disconnected')
     },
     onGameEnd: (data) => {
       gameStore.setGameEnd(data)
@@ -41,30 +42,18 @@ export function useSSE() {
 
   async function connect(request: LiveStreamRequest) {
     if (!authStore.isAuthenticated) {
-      connectionStore.setError({
-        code: 'AUTH_REQUIRED',
-        message: '请先登录再连接数据流',
-        recoverable: false,
-        timestamp: new Date().toISOString(),
-      })
-      connectionStore.setStatus('error')
+      connectionStore.setStatus('disconnected')
       return
     }
 
     connectionStore.setStatus('connecting')
     gameStore.reset()
-    connectionStore.clearError()
 
     try {
       await sseService.connect(request, authStore.token)
     } catch (error) {
-      connectionStore.setStatus('error')
-      connectionStore.setError({
-        code: 'CONNECTION_FAILED',
-        message: error instanceof Error ? error.message : 'Failed to connect',
-        recoverable: false,
-        timestamp: new Date().toISOString(),
-      })
+      console.warn('SSE connect failed:', error)
+      connectionStore.setStatus('disconnected')
     }
   }
 

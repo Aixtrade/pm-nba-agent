@@ -23,14 +23,12 @@ const analysisChunks = computed(() => gameStore.analysisChunks)
 const statusLabel = computed(() => {
   if (connectionStore.isConnecting) return '连接中'
   if (connectionStore.isConnected) return '已连接'
-  if (connectionStore.hasError) return '连接错误'
   return '未连接'
 })
 
 const statusClass = computed(() => {
   if (connectionStore.isConnected) return 'badge-success'
   if (connectionStore.isConnecting) return 'badge-warning'
-  if (connectionStore.hasError) return 'badge-error'
   return 'badge-ghost'
 })
 

@@ -76,6 +76,16 @@ uv add nba_api pandas openai
 
 ## 快速开始
 
+### 运行 API（uv）
+
+```bash
+# 启动 FastAPI 服务
+uv run uvicorn pm_nba_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
+
+# API 文档
+# http://localhost:8000/docs
+```
+
 ### 基础比赛数据
 
 ```python

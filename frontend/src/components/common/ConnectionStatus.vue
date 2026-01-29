@@ -10,8 +10,6 @@ const statusConfig = computed(() => {
       return { text: '已连接', class: 'badge-success' }
     case 'connecting':
       return { text: '连接中...', class: 'badge-warning' }
-    case 'error':
-      return { text: '连接错误', class: 'badge-error' }
     default:
       return { text: '未连接', class: 'badge-neutral' }
   }
@@ -27,12 +25,5 @@ const statusConfig = computed(() => {
       ></span>
       {{ statusConfig.text }}
     </span>
-    <div
-      v-if="connectionStore.lastError"
-      class="tooltip tooltip-left"
-      :data-tip="connectionStore.lastError.message"
-    >
-      <span class="text-error cursor-help">!</span>
-    </div>
   </div>
 </template>

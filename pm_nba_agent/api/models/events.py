@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 import json
 
 
@@ -32,6 +32,7 @@ class ScoreboardEvent(SSEEvent):
         game_clock: str,
         home_team: dict,
         away_team: dict,
+        status_message: Optional[str] = None,
     ) -> "ScoreboardEvent":
         return cls(data={
             "game_id": game_id,
@@ -40,6 +41,7 @@ class ScoreboardEvent(SSEEvent):
             "game_clock": game_clock,
             "home_team": home_team,
             "away_team": away_team,
+            "status_message": status_message,
         })
 
 

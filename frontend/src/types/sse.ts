@@ -21,6 +21,7 @@ export interface ScoreboardEventData {
   status: string
   period: number
   game_clock: string
+  status_message?: string | null
   home_team: {
     name: string
     abbreviation: string
