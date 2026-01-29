@@ -39,6 +39,7 @@ export function useSSE() {
     },
     onError: (data) => {
       console.warn('SSE Error:', data)
+      if (data?.recoverable) return
       connectionStore.setStatus('disconnected')
     },
     onGameEnd: (data) => {
