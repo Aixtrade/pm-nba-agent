@@ -54,11 +54,6 @@ function formatPrice(value: number | null): string {
   return value.toFixed(3)
 }
 
-function formatSize(value: number | null): string {
-  if (value === null || Number.isNaN(value)) return '--'
-  return value.toString()
-}
-
 function formatPercent(value: number | null): string {
   if (value === null || Number.isNaN(value)) return '--'
   return `${(value * 100).toFixed(1)}%`
