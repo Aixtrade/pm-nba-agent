@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import AppHeader from '@/components/common/AppHeader.vue'
+import GlobalToast from '@/components/common/GlobalToast.vue'
 
 const route = useRoute()
 const showHeader = computed(() => route.name !== 'login')
@@ -13,6 +14,7 @@ const showHeader = computed(() => route.name !== 'login')
     :class="showHeader ? 'app-shell--default' : 'app-shell--plain'"
   >
     <AppHeader v-if="showHeader" />
+    <GlobalToast />
     <main class="flex-1 w-full app-main" :class="showHeader ? 'px-4 py-6' : 'p-0'">
       <RouterView />
     </main>

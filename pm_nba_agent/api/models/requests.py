@@ -187,39 +187,3 @@ class PolymarketBatchOrderResponse(BaseModel):
         description="批量下单返回",
     )
 
-
-class PolymarketMarketConstraintsResponse(BaseModel):
-    """Polymarket 市场限制信息"""
-
-    token_id: str = Field(
-        ...,
-        description="Polymarket 代币 ID",
-    )
-    tick_size: float | None = Field(
-        default=None,
-        description="最小价格步进",
-    )
-    min_order_size: float | None = Field(
-        default=None,
-        description="最小下单数量",
-    )
-    min_price: float | None = Field(
-        default=None,
-        description="最小允许价格",
-    )
-    max_price: float | None = Field(
-        default=None,
-        description="最大允许价格",
-    )
-    neg_risk: bool | None = Field(
-        default=None,
-        description="负风险市场标识",
-    )
-    fee_rate_bps: int | None = Field(
-        default=None,
-        description="市场基础费率 (bps)",
-    )
-    last_trade_price: float | None = Field(
-        default=None,
-        description="最新成交价",
-    )
