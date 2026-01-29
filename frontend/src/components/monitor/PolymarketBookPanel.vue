@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useGameStore } from '@/stores'
+import { computed, reactive, ref } from 'vue'
+import { useAuthStore, useGameStore } from '@/stores'
 
+const authStore = useAuthStore()
 const gameStore = useGameStore()
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
+const ORDER_TYPE = 'GTC'
 
 const polymarketInfo = computed(() => gameStore.polymarketInfo)
 const bookUpdatedAt = computed(() => gameStore.polymarketBookUpdatedAt)
@@ -27,6 +30,11 @@ const rows = computed(() => {
   })
 })
 
+const sizeByToken = reactive<Record<string, string>>({})
+const submitting = reactive<Record<string, boolean>>({})
+const lastMessage = ref<string | null>(null)
+const lastMessageType = ref<'success' | 'error' | 'info'>('info')
+
 function formatPrice(value: number | null): string {
   if (value === null || Number.isNaN(value)) return '--'
   return value.toFixed(3)
@@ -47,6 +55,81 @@ function formatTime(timestamp: string | null): string {
     second: '2-digit',
   })
 }
+
+function getSize(tokenId: string): string {
+  return sizeByToken[tokenId] ?? '10'
+}
+
+function setSize(tokenId: string, value: string) {
+  sizeByToken[tokenId] = value
+}
+
+function getPrice(
+  side: 'BUY' | 'SELL',
+  row: { bestBid: number | null; bestAsk: number | null }
+) {
+  return side === 'BUY' ? row.bestAsk : row.bestBid
+}
+
+async function placeOrder(
+  row: { tokenId: string; bestBid: number | null; bestAsk: number | null },
+  side: 'BUY' | 'SELL'
+) {
+  lastMessage.value = null
+
+  if (!authStore.isAuthenticated) {
+    lastMessageType.value = 'error'
+    lastMessage.value = '请先登录获取访问令牌'
+    return
+  }
+
+  const price = getPrice(side, row)
+  if (price === null || Number.isNaN(price)) {
+    lastMessageType.value = 'error'
+    lastMessage.value = '暂无可用价格'
+    return
+  }
+
+  const sizeValue = Number(getSize(row.tokenId))
+  if (!sizeValue || Number.isNaN(sizeValue) || sizeValue <= 0) {
+    lastMessageType.value = 'error'
+    lastMessage.value = '请输入正确的购买份数'
+    return
+  }
+
+  submitting[row.tokenId] = true
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/polymarket/orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authStore.token}`,
+      },
+      body: JSON.stringify({
+        token_id: row.tokenId,
+        side,
+        price,
+        size: sizeValue,
+        order_type: ORDER_TYPE,
+      }),
+    })
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => null)
+      throw new Error(data?.detail || '下单失败')
+    }
+
+    const data = await response.json().catch(() => null)
+    lastMessageType.value = 'success'
+    lastMessage.value = `下单成功：${data?.response?.orderID || data?.response?.id || '已提交'}`
+  } catch (error) {
+    lastMessageType.value = 'error'
+    lastMessage.value = error instanceof Error ? error.message : '下单失败'
+  } finally {
+    submitting[row.tokenId] = false
+  }
+}
 </script>
 
 <template>
@@ -55,17 +138,15 @@ function formatTime(timestamp: string | null): string {
       <div class="flex items-start justify-between gap-3">
         <div>
           <h3 class="card-title">Polymarket 盘口</h3>
-          <p class="text-xs text-base-content/60">
-            {{ polymarketInfo?.title || '等待市场信息...' }}
-          </p>
-          <p v-if="polymarketInfo?.market_info?.question" class="text-xs text-base-content/50">
-            {{ polymarketInfo.market_info.question }}
-          </p>
         </div>
         <div class="text-right text-xs text-base-content/60">
           <div>最新更新</div>
           <div class="font-medium text-base-content/80">{{ formatTime(bookUpdatedAt) }}</div>
         </div>
+      </div>
+
+      <div v-if="!authStore.isAuthenticated" class="mt-3 text-right text-xs text-amber-600/80">
+        下单前请先登录
       </div>
 
       <div v-if="rows.length === 0" class="py-6 text-center text-base-content/50">
@@ -107,7 +188,45 @@ function formatTime(timestamp: string | null): string {
               </div>
             </div>
           </div>
+
+          <div class="mt-3 grid grid-cols-[1fr_auto_auto] gap-2 items-center">
+            <input
+              :value="getSize(row.tokenId)"
+              type="number"
+              min="0"
+              step="1"
+              class="input input-bordered input-sm w-full"
+              placeholder="份数"
+              @input="setSize(row.tokenId, ($event.target as HTMLInputElement).value)"
+            />
+            <button
+              class="btn btn-sm btn-success"
+              :disabled="submitting[row.tokenId] || row.bestAsk === null"
+              @click="placeOrder(row, 'BUY')"
+            >
+              买入@卖价
+            </button>
+            <button
+              class="btn btn-sm btn-outline"
+              :disabled="submitting[row.tokenId] || row.bestBid === null"
+              @click="placeOrder(row, 'SELL')"
+            >
+              卖出@买价
+            </button>
+          </div>
         </div>
+      </div>
+
+      <div
+        v-if="lastMessage"
+        class="mt-4 rounded-md px-3 py-2 text-xs"
+        :class="{
+          'bg-emerald-50/70 text-emerald-800': lastMessageType === 'success',
+          'bg-rose-50/70 text-rose-800': lastMessageType === 'error',
+          'bg-slate-50 text-slate-600': lastMessageType === 'info'
+        }"
+      >
+        {{ lastMessage }}
       </div>
     </div>
   </div>

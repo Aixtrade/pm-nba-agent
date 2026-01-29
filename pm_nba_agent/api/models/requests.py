@@ -96,3 +96,85 @@ class LoginResponse(BaseModel):
         default="Bearer",
         description="令牌类型"
     )
+
+
+class PolymarketOrderRequest(BaseModel):
+    """Polymarket 下单请求"""
+
+    token_id: str = Field(
+        ...,
+        description="Polymarket 代币 ID",
+        examples=["71321045679252212594626385532706912750332728571942532289631379312455583992563"],
+    )
+    side: str = Field(
+        ...,
+        description="买卖方向 (BUY/SELL)",
+        examples=["BUY"],
+    )
+    price: float = Field(
+        ...,
+        gt=0.0,
+        le=1.0,
+        description="限价 (0-1)",
+    )
+    size: float = Field(
+        ...,
+        gt=0.0,
+        description="下单数量",
+    )
+    order_type: str = Field(
+        default="GTC",
+        description="订单类型 (GTC/GTD)",
+    )
+    expiration: str | None = Field(
+        default=None,
+        description="GTD 到期时间 (毫秒字符串)",
+        examples=["1000000000000"],
+    )
+
+    @field_validator("side")
+    @classmethod
+    def validate_side(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if normalized not in {"BUY", "SELL"}:
+            raise ValueError("side 仅支持 BUY 或 SELL")
+        return normalized
+
+    @field_validator("order_type")
+    @classmethod
+    def validate_order_type(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if normalized not in {"GTC", "GTD"}:
+            raise ValueError("order_type 仅支持 GTC 或 GTD")
+        return normalized
+
+
+class PolymarketOrderResponse(BaseModel):
+    """Polymarket 下单响应"""
+
+    order_type: str = Field(
+        ...,
+        description="订单类型",
+    )
+    response: dict = Field(
+        ...,
+        description="Polymarket 下单返回",
+    )
+
+
+class PolymarketBatchOrderRequest(BaseModel):
+    """Polymarket 批量下单请求"""
+
+    orders: list[PolymarketOrderRequest] = Field(
+        ...,
+        description="订单列表",
+    )
+
+
+class PolymarketBatchOrderResponse(BaseModel):
+    """Polymarket 批量下单响应"""
+
+    results: list = Field(
+        ...,
+        description="批量下单返回",
+    )

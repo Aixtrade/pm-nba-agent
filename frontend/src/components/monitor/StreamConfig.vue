@@ -171,7 +171,7 @@ async function handleAddSource() {
       return
     }
 
-    const fallbackName = `${event.team1_abbr} vs ${event.team2_abbr} - ${event.game_date}`
+    const fallbackName = `${event.team1_abbr} ${event.team2_abbr} - ${event.game_date}`
     const name = event.display_name || fallbackName
 
     const source: MonitorSource = {
