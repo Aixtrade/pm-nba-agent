@@ -17,6 +17,47 @@ _SIDE_MAP = {
 }
 
 
+def _format_clob_error(exc: Exception) -> str:
+    details: list[str] = []
+    details.append(f"type={type(exc).__name__}")
+
+    for attr in ("message", "detail", "error", "reason"):
+        value = getattr(exc, attr, None)
+        if value:
+            details.append(f"{attr}={value}")
+
+    response = getattr(exc, "response", None)
+    if response is not None:
+        status_code = getattr(response, "status_code", None)
+        if status_code is not None:
+            details.append(f"status_code={status_code}")
+        text = getattr(response, "text", None)
+        if text:
+            details.append(f"response_text={text}")
+        json_payload = None
+        if hasattr(response, "json"):
+            try:
+                json_payload = response.json()
+            except Exception:
+                json_payload = None
+        if json_payload is not None:
+            details.append(f"response_json={json_payload}")
+
+    if exc.args:
+        details.append(f"args={exc.args}")
+
+    return "; ".join(details)
+
+
+def _validate_basic_inputs(token_id: str, price: float, size: float) -> None:
+    if not str(token_id).strip():
+        raise ValueError("token_id 不能为空")
+    if price <= 0:
+        raise ValueError("price 必须大于 0")
+    if size <= 0:
+        raise ValueError("size 必须大于 0")
+
+
 def _normalize_side(side: str) -> str:
     normalized = side.strip().upper()
     if normalized not in _SIDE_MAP:
@@ -44,6 +85,7 @@ async def create_polymarket_order(
 ) -> Any:
     normalized_side = _normalize_side(side)
     normalized_order_type = _normalize_order_type(order_type)
+    _validate_basic_inputs(token_id, price, size)
 
     if normalized_order_type == "GTD" and not expiration:
         raise ValueError("GTD 订单必须提供 expiration")
@@ -63,10 +105,19 @@ async def create_polymarket_order(
     if expiration:
         order_kwargs["expiration"] = expiration
 
-    order_args = OrderArgs(**order_kwargs)
-    signed_order = client.create_order(order_args)
-    order_type_value = "GTC" if normalized_order_type == "GTC" else "GTD"
-    return client.post_order(signed_order, cast(Any, order_type_value))
+    try:
+        order_args = OrderArgs(**order_kwargs)
+        signed_order = client.create_order(order_args)
+        order_type_value = "GTC" if normalized_order_type == "GTC" else "GTD"
+        return client.post_order(signed_order, cast(Any, order_type_value))
+    except Exception as exc:
+        error_details = _format_clob_error(exc)
+        raise ValueError(
+            "Polymarket 下单失败: "
+            f"token_id={token_id}, side={normalized_side}, price={price}, size={size}, "
+            f"order_type={normalized_order_type}, expiration={expiration}, error={exc}, "
+            f"details={error_details}"
+        ) from exc
 
 
 async def create_polymarket_orders_batch(
@@ -96,6 +147,8 @@ async def create_polymarket_orders_batch(
         except KeyError as exc:
             raise ValueError(f"orders[{index}] 缺少字段 {exc}") from exc
 
+        _validate_basic_inputs(token_id, price, size)
+
         if order_type == "GTD" and not expiration:
             raise ValueError(f"orders[{index}] GTD 订单必须提供 expiration")
 
@@ -108,14 +161,30 @@ async def create_polymarket_orders_batch(
         if expiration:
             order_kwargs["expiration"] = expiration
 
-        order_args = OrderArgs(**order_kwargs)
-        signed_order = client.create_order(order_args)
-        order_type_value = "GTC" if order_type == "GTC" else "GTD"
-        post_orders.append(
-            PostOrdersArgs(
-                order=signed_order,
-                orderType=cast(Any, order_type_value),
+        try:
+            order_args = OrderArgs(**order_kwargs)
+            signed_order = client.create_order(order_args)
+            order_type_value = "GTC" if order_type == "GTC" else "GTD"
+            post_orders.append(
+                PostOrdersArgs(
+                    order=signed_order,
+                    orderType=cast(Any, order_type_value),
+                )
             )
-        )
+        except Exception as exc:
+            error_details = _format_clob_error(exc)
+            raise ValueError(
+                "Polymarket 订单签名失败: "
+                f"orders[{index}] token_id={token_id}, side={side}, price={price}, size={size}, "
+                f"order_type={order_type}, expiration={expiration}, error={exc}, "
+                f"details={error_details}"
+            ) from exc
 
-    return client.post_orders(post_orders)
+    try:
+        return client.post_orders(post_orders)
+    except Exception as exc:
+        error_details = _format_clob_error(exc)
+        raise ValueError(
+            "Polymarket 批量下单失败: "
+            f"count={len(post_orders)}, error={exc}, details={error_details}"
+        ) from exc

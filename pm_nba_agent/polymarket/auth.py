@@ -7,6 +7,7 @@ import os
 from typing import Any, Optional
 
 from py_clob_client.client import ClobClient
+from py_order_utils.model import EOA, POLY_GNOSIS_SAFE, POLY_PROXY
 
 from .config import (
     POLYMARKET_PRIVATE_KEY,
@@ -50,14 +51,35 @@ class PolymarketAuthProvider:
         return os.getenv("POLYMARKET_PROXY_ADDRESS") or POLYMARKET_PROXY_ADDRESS
 
     @staticmethod
+    def _normalize_signature_type(signature_type: Any) -> Any:
+        if signature_type is None:
+            return None
+        if isinstance(signature_type, int):
+            return signature_type
+        if isinstance(signature_type, str):
+            value = signature_type.strip().upper()
+            if value.isdigit():
+                return int(value)
+            mapping = {
+                "EOA": EOA,
+                "POLY_PROXY": POLY_PROXY,
+                "POLY_GNOSIS_SAFE": POLY_GNOSIS_SAFE,
+            }
+            return mapping.get(value, signature_type)
+        return signature_type
+
+    @staticmethod
     def _build_clob_client(
         private_key: str,
         proxy_address: Optional[str],
     ) -> ClobClient:
         clob_url = os.getenv("POLYMARKET_CLOB_URL") or POLYMARKET_CLOB_URL
         chain_id = int(os.getenv("POLYMARKET_CHAIN_ID") or POLYMARKET_CHAIN_ID)
-        signature_type: Any = (
+        signature_type_raw: Any = (
             os.getenv("POLYMARKET_SIGNATURE_TYPE") or POLYMARKET_SIGNATURE_TYPE
+        )
+        signature_type = PolymarketAuthProvider._normalize_signature_type(
+            signature_type_raw
         )
         funder = proxy_address or ""
         return ClobClient(

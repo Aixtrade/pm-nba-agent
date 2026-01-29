@@ -8,7 +8,7 @@ from ..models.requests import (
     PolymarketBatchOrderRequest,
     PolymarketBatchOrderResponse,
 )
-from ..services.auth import get_auth_config, is_token_valid
+from ..services.auth import require_auth
 from ...polymarket.orders import (
     create_polymarket_order,
     create_polymarket_orders_batch,
@@ -16,23 +16,6 @@ from ...polymarket.orders import (
 
 
 router = APIRouter(prefix="/api/v1/polymarket", tags=["polymarket"])
-
-
-def require_auth(request: Request) -> None:
-    passphrase, salt = get_auth_config()
-
-    if not passphrase:
-        raise HTTPException(status_code=500, detail="Auth 配置缺失")
-
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="缺少访问令牌")
-
-    provided = auth_header.removeprefix("Bearer ").strip()
-    if not is_token_valid(provided, passphrase, salt):
-        raise HTTPException(status_code=401, detail="访问令牌无效")
-
-
 @router.post("/orders", response_model=PolymarketOrderResponse)
 async def create_order(
     request: Request,
@@ -49,6 +32,8 @@ async def create_order(
             size=body.size,
             order_type=body.order_type,
             expiration=body.expiration,
+            private_key=body.private_key,
+            proxy_address=body.proxy_address,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -70,8 +55,12 @@ async def create_orders_batch(
     require_auth(request)
 
     try:
+        batch_private_key = body.orders[0].private_key if body.orders else None
+        batch_proxy_address = body.orders[0].proxy_address if body.orders else None
         results = await create_polymarket_orders_batch(
             orders=[order.model_dump() for order in body.orders],
+            private_key=batch_private_key,
+            proxy_address=batch_proxy_address,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

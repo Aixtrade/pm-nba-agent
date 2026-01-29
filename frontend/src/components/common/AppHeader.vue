@@ -10,7 +10,13 @@ import ConnectionStatus from './ConnectionStatus.vue'
 const router = useRouter()
 const { connect, disconnect } = useSSE()
 const isConfigOpen = ref(false)
+const isPolymarketConfigOpen = ref(false)
 const authStore = useAuthStore()
+const polymarketPrivateKey = ref('')
+const polymarketProxyAddress = ref('')
+
+const POLYMARKET_PRIVATE_KEY = 'POLYMARKET_PRIVATE_KEY'
+const POLYMARKET_PROXY_ADDRESS = 'POLYMARKET_PROXY_ADDRESS'
 
 function handleConnect(request: LiveStreamRequest) {
   connect(request)
@@ -25,6 +31,42 @@ function handleLogout() {
   handleDisconnect()
   authStore.logout()
   router.push({ name: 'login' })
+}
+
+function loadPolymarketConfig() {
+  polymarketPrivateKey.value = localStorage.getItem(POLYMARKET_PRIVATE_KEY) ?? ''
+  polymarketProxyAddress.value = localStorage.getItem(POLYMARKET_PROXY_ADDRESS) ?? ''
+}
+
+function openPolymarketConfig() {
+  loadPolymarketConfig()
+  isPolymarketConfigOpen.value = true
+}
+
+function savePolymarketConfig() {
+  const trimmedPrivateKey = polymarketPrivateKey.value.trim()
+  const trimmedProxyAddress = polymarketProxyAddress.value.trim()
+
+  if (trimmedPrivateKey) {
+    localStorage.setItem(POLYMARKET_PRIVATE_KEY, trimmedPrivateKey)
+  } else {
+    localStorage.removeItem(POLYMARKET_PRIVATE_KEY)
+  }
+
+  if (trimmedProxyAddress) {
+    localStorage.setItem(POLYMARKET_PROXY_ADDRESS, trimmedProxyAddress)
+  } else {
+    localStorage.removeItem(POLYMARKET_PROXY_ADDRESS)
+  }
+
+  isPolymarketConfigOpen.value = false
+}
+
+function clearPolymarketConfig() {
+  polymarketPrivateKey.value = ''
+  polymarketProxyAddress.value = ''
+  localStorage.removeItem(POLYMARKET_PRIVATE_KEY)
+  localStorage.removeItem(POLYMARKET_PROXY_ADDRESS)
 }
 </script>
 
@@ -44,6 +86,13 @@ function handleLogout() {
           @click="isConfigOpen = true"
         >
           比赛列表
+        </button>
+        <button
+          v-if="authStore.isAuthenticated"
+          class="btn btn-outline btn-sm"
+          @click="openPolymarketConfig"
+        >
+          Polymarket 配置
         </button>
         <button
           v-if="authStore.isAuthenticated"
@@ -77,6 +126,57 @@ function handleLogout() {
       />
     </div>
     <form method="dialog" class="modal-backdrop" @click="isConfigOpen = false">
+      <button>close</button>
+    </form>
+  </dialog>
+
+  <dialog
+    class="modal"
+    :open="isPolymarketConfigOpen"
+    @close="isPolymarketConfigOpen = false"
+  >
+    <div class="modal-box">
+      <h3 class="text-lg font-semibold">Polymarket 配置</h3>
+      <div class="mt-4 space-y-4">
+        <label class="form-control w-full">
+          <div class="label">
+            <span class="label-text">POLYMARKET_PRIVATE_KEY</span>
+          </div>
+          <input
+            v-model="polymarketPrivateKey"
+            type="password"
+            autocomplete="off"
+            class="input input-bordered w-full"
+            placeholder="输入私钥"
+          />
+        </label>
+        <label class="form-control w-full">
+          <div class="label">
+            <span class="label-text">POLYMARKET_PROXY_ADDRESS</span>
+          </div>
+          <input
+            v-model="polymarketProxyAddress"
+            type="text"
+            autocomplete="off"
+            class="input input-bordered w-full"
+            placeholder="输入代理地址"
+          />
+        </label>
+      </div>
+      <div class="mt-6 flex items-center justify-end gap-2">
+        <button class="btn btn-ghost" @click="clearPolymarketConfig">
+          清空
+        </button>
+        <button class="btn btn-primary" @click="savePolymarketConfig">
+          保存
+        </button>
+      </div>
+    </div>
+    <form
+      method="dialog"
+      class="modal-backdrop"
+      @click="isPolymarketConfigOpen = false"
+    >
       <button>close</button>
     </form>
   </dialog>

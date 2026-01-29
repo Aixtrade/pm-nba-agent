@@ -11,6 +11,7 @@ from .routes.live_stream import router as live_stream_router
 from .routes.parse import router as parse_router
 from .routes.auth import router as auth_router
 from .routes.orders import router as orders_router
+from .routes.market import router as market_router
 from .services.data_fetcher import DataFetcher
 from ..agent import GameAnalyzer, AnalysisConfig
 
@@ -62,6 +63,7 @@ app.include_router(live_stream_router)
 app.include_router(parse_router)
 app.include_router(auth_router)
 app.include_router(orders_router)
+app.include_router(market_router)
 
 
 @app.get("/health")

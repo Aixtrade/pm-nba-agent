@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useAuthStore, useGameStore } from '@/stores'
 
 const authStore = useAuthStore()
 const gameStore = useGameStore()
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 const ORDER_TYPE = 'GTC'
+const POLYMARKET_PRIVATE_KEY = 'POLYMARKET_PRIVATE_KEY'
+const POLYMARKET_PROXY_ADDRESS = 'POLYMARKET_PROXY_ADDRESS'
 
 const polymarketInfo = computed(() => gameStore.polymarketInfo)
 const bookUpdatedAt = computed(() => gameStore.polymarketBookUpdatedAt)
@@ -35,9 +37,29 @@ const submitting = reactive<Record<string, boolean>>({})
 const lastMessage = ref<string | null>(null)
 const lastMessageType = ref<'success' | 'error' | 'info'>('info')
 
+type MarketConstraints = {
+  token_id: string
+  tick_size: number | null
+  min_order_size: number | null
+  min_price: number | null
+  max_price: number | null
+  neg_risk: boolean | null
+  fee_rate_bps: number | null
+  last_trade_price: number | null
+}
+
+const constraintsByToken = reactive<Record<string, MarketConstraints | null>>({})
+const constraintsLoading = reactive<Record<string, boolean>>({})
+const constraintsError = reactive<Record<string, string | null>>({})
+
 function formatPrice(value: number | null): string {
   if (value === null || Number.isNaN(value)) return '--'
   return value.toFixed(3)
+}
+
+function formatSize(value: number | null): string {
+  if (value === null || Number.isNaN(value)) return '--'
+  return value.toString()
 }
 
 function formatPercent(value: number | null): string {
@@ -71,6 +93,64 @@ function getPrice(
   return side === 'BUY' ? row.bestAsk : row.bestBid
 }
 
+function getPolymarketConfig() {
+  const privateKey = localStorage.getItem(POLYMARKET_PRIVATE_KEY)?.trim() ?? ''
+  const proxyAddress = localStorage.getItem(POLYMARKET_PROXY_ADDRESS)?.trim() ?? ''
+  return { privateKey, proxyAddress }
+}
+
+function getConstraints(tokenId: string) {
+  return constraintsByToken[tokenId] ?? null
+}
+
+async function fetchMarketConstraints(tokenId: string) {
+  if (!authStore.isAuthenticated) return
+  if (constraintsLoading[tokenId]) return
+  if (constraintsByToken[tokenId]) return
+
+  constraintsLoading[tokenId] = true
+  constraintsError[tokenId] = null
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/polymarket/market/${tokenId}`, {
+      headers: {
+        Authorization: `Bearer ${authStore.token}`,
+      },
+    })
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => null)
+      throw new Error(data?.detail || '获取市场限制失败')
+    }
+
+    const data = (await response.json()) as MarketConstraints
+    constraintsByToken[tokenId] = data
+  } catch (error) {
+    constraintsError[tokenId] = error instanceof Error ? error.message : '获取市场限制失败'
+  } finally {
+    constraintsLoading[tokenId] = false
+  }
+}
+
+function isPriceAligned(price: number, tickSize: number) {
+  const ratio = price / tickSize
+  const rounded = Math.round(ratio) * tickSize
+  return Math.abs(price - rounded) <= 1e-6
+}
+
+watch(
+  [rows, () => authStore.isAuthenticated],
+  ([nextRows, isAuthed]) => {
+    if (!isAuthed) return
+    nextRows.forEach(row => {
+      if (!constraintsByToken[row.tokenId]) {
+        fetchMarketConstraints(row.tokenId)
+      }
+    })
+  },
+  { immediate: true }
+)
+
 async function placeOrder(
   row: { tokenId: string; bestBid: number | null; bestAsk: number | null },
   side: 'BUY' | 'SELL'
@@ -90,10 +170,48 @@ async function placeOrder(
     return
   }
 
+  const { privateKey, proxyAddress } = getPolymarketConfig()
+  if (!privateKey) {
+    lastMessageType.value = 'error'
+    lastMessage.value = '请先在顶部配置 Polymarket 私钥'
+    return
+  }
+  if (!proxyAddress) {
+    lastMessageType.value = 'error'
+    lastMessage.value = '请先在顶部配置 Polymarket 代理地址'
+    return
+  }
+
   const sizeValue = Number(getSize(row.tokenId))
   if (!sizeValue || Number.isNaN(sizeValue) || sizeValue <= 0) {
     lastMessageType.value = 'error'
     lastMessage.value = '请输入正确的购买份数'
+    return
+  }
+
+  const constraints = getConstraints(row.tokenId)
+  if (!constraints) {
+    lastMessageType.value = 'info'
+    lastMessage.value = '正在获取市场限制，请稍后重试'
+    fetchMarketConstraints(row.tokenId)
+    return
+  }
+
+  if (constraints.min_price && price < constraints.min_price) {
+    lastMessageType.value = 'error'
+    lastMessage.value = `价格不能低于 ${constraints.min_price}`
+    return
+  }
+
+  if (constraints.max_price && price > constraints.max_price) {
+    lastMessageType.value = 'error'
+    lastMessage.value = `价格不能高于 ${constraints.max_price}`
+    return
+  }
+
+  if (constraints.tick_size && !isPriceAligned(price, constraints.tick_size)) {
+    lastMessageType.value = 'error'
+    lastMessage.value = `价格必须符合最小步进 ${constraints.tick_size}`
     return
   }
 
@@ -112,6 +230,8 @@ async function placeOrder(
         price,
         size: sizeValue,
         order_type: ORDER_TYPE,
+        private_key: privateKey,
+        proxy_address: proxyAddress,
       }),
     })
 
@@ -187,6 +307,16 @@ async function placeOrder(
                 {{ formatPercent(row.bestAsk) }} · {{ row.askSize ?? '--' }}
               </div>
             </div>
+          </div>
+
+          <div class="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-base-content/60">
+            <template v-if="getConstraints(row.tokenId)">
+              <span>最小价 {{ formatPrice(getConstraints(row.tokenId)?.min_price ?? null) }}</span>
+              <span>最大价 {{ formatPrice(getConstraints(row.tokenId)?.max_price ?? null) }}</span>
+              <span>步进 {{ formatPrice(getConstraints(row.tokenId)?.tick_size ?? null) }}</span>
+            </template>
+            <span v-else-if="constraintsLoading[row.tokenId]">市场限制加载中...</span>
+            <span v-else-if="constraintsError[row.tokenId]">{{ constraintsError[row.tokenId] }}</span>
           </div>
 
           <div class="mt-3 grid grid-cols-[1fr_auto_auto] gap-2 items-center">
