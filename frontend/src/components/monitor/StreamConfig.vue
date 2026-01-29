@@ -44,6 +44,7 @@ const includeScoreboard = ref(true)
 const includeBoxscore = ref(true)
 const includePlaybyplay = ref(true)
 const playbyplayLimit = ref(20)
+const analysisInterval = ref(30)
 
 // 是否显示高级选项
 const showAdvanced = ref(false)
@@ -202,6 +203,7 @@ function handleConnect() {
     include_boxscore: includeBoxscore.value,
     include_playbyplay: includePlaybyplay.value,
     playbyplay_limit: playbyplayLimit.value,
+    analysis_interval: analysisInterval.value,
   })
 }
 
@@ -331,6 +333,26 @@ onMounted(() => {
           <div class="flex justify-between text-xs px-2 mt-1">
             <span>5s</span>
             <span>60s</span>
+          </div>
+        </div>
+
+        <div class="form-control">
+          <label class="label">
+            <span class="label-text">AI 分析间隔 (秒)</span>
+            <span class="label-text-alt">{{ analysisInterval }}s</span>
+          </label>
+          <input
+            v-model.number="analysisInterval"
+            type="range"
+            min="10"
+            max="120"
+            step="5"
+            class="range range-sm"
+            :disabled="connectionStore.isConnected"
+          />
+          <div class="flex justify-between text-xs px-2 mt-1">
+            <span>10s</span>
+            <span>120s</span>
           </div>
         </div>
 

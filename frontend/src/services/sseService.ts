@@ -37,6 +37,7 @@ export class SSEService {
         include_boxscore: request.include_boxscore ?? true,
         include_playbyplay: request.include_playbyplay ?? true,
         playbyplay_limit: request.playbyplay_limit ?? 20,
+        analysis_interval: request.analysis_interval ?? 30,
       }),
       signal: this.abortController.signal,
       openWhenHidden: true,

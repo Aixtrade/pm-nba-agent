@@ -13,6 +13,7 @@ export interface LiveStreamRequest {
   include_boxscore?: boolean
   include_playbyplay?: boolean
   playbyplay_limit?: number
+  analysis_interval?: number
 }
 
 // Scoreboard 事件数据
