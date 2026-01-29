@@ -5,6 +5,7 @@ import BoxScore from '@/components/monitor/BoxScore.vue'
 import PlayerStatsTable from '@/components/monitor/PlayerStatsTable.vue'
 import PlayByPlay from '@/components/monitor/PlayByPlay.vue'
 import AgentAnalysisPanel from '@/components/monitor/AgentAnalysisPanel.vue'
+import PolymarketBookPanel from '@/components/monitor/PolymarketBookPanel.vue'
 
 const connectionStore = useConnectionStore()
 const gameStore = useGameStore()
@@ -41,7 +42,10 @@ const gameStore = useGameStore()
       </div>
 
       <!-- Agent 分析侧边栏 -->
-      <AgentAnalysisPanel />
+      <div class="space-y-6">
+        <PolymarketBookPanel />
+        <AgentAnalysisPanel />
+      </div>
     </div>
 
     <!-- 未连接时的占位提示 -->

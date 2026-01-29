@@ -105,6 +105,25 @@ export interface PolymarketInfoEventData {
 
 // Polymarket Book 事件数据
 export interface PolymarketBookEventData {
+  asset_id?: string
+  assetId?: string
+  token_id?: string
+  tokenId?: string
+  event_type?: string
+  price_changes?: Array<{
+    asset_id?: string
+    price?: string | number
+    size?: string | number
+    side?: string
+    best_bid?: string | number
+    best_ask?: string | number
+  }>
+  bids?: Array<[number | string, number | string] | { price?: number | string; size?: number | string }>
+  asks?: Array<[number | string, number | string] | { price?: number | string; size?: number | string }>
+  timestamp?: string
+  data?: Record<string, unknown>
+  payload?: Record<string, unknown>
+  message?: Record<string, unknown>
   [key: string]: unknown
 }
 

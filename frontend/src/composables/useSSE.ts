@@ -31,6 +31,12 @@ export function useSSE() {
     onHeartbeat: (data) => {
       connectionStore.setHeartbeat(data.timestamp)
     },
+    onPolymarketInfo: (data) => {
+      gameStore.setPolymarketInfo(data)
+    },
+    onPolymarketBook: (data) => {
+      gameStore.updatePolymarketBook(data)
+    },
     onError: (data) => {
       console.warn('SSE Error:', data)
       connectionStore.setStatus('disconnected')

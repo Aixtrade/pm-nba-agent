@@ -172,7 +172,7 @@ class PolymarketWebSocketClient:
                 return False
 
             if not asset_ids:
-                logger.error("market channel 需要 assets_ids")
+                logger.error("market channel 需要 asset_ids")
                 return False
             if markets:
                 logger.debug("market channel 忽略 markets 参数")
@@ -186,6 +186,7 @@ class PolymarketWebSocketClient:
                 if not self._has_initialized_subscription:
                     subscribe_msg = {
                         "type": self.MARKET_CHANNEL,
+                        "asset_ids": self._subscribed_assets,
                         "assets_ids": self._subscribed_assets,
                         "subscribe_type": subscribe_type,
                     }
@@ -199,6 +200,7 @@ class PolymarketWebSocketClient:
                 else:
                     subscribe_msg = {
                         "operation": "subscribe",
+                        "asset_ids": asset_ids,
                         "assets_ids": asset_ids,
                         "subscribe_type": subscribe_type,
                     }
@@ -245,6 +247,7 @@ class PolymarketWebSocketClient:
             target_assets = asset_ids or self._subscribed_assets
             unsubscribe_msg: dict[str, Any] = {"operation": "unsubscribe"}
             if target_assets:
+                unsubscribe_msg["asset_ids"] = target_assets
                 unsubscribe_msg["assets_ids"] = target_assets
             self.ws.send(json.dumps(unsubscribe_msg))
 
@@ -308,6 +311,7 @@ class PolymarketWebSocketClient:
             if self._subscribed_assets:
                 subscribe_msg = {
                     "type": self.MARKET_CHANNEL,
+                    "asset_ids": self._subscribed_assets,
                     "assets_ids": self._subscribed_assets,
                     "subscribe_type": self._subscribe_type,
                 }
@@ -349,10 +353,12 @@ class PolymarketWebSocketClient:
                 return
 
             if not (cleaned.startswith("{") or cleaned.startswith("[")):
-                logger.debug("忽略非 JSON 消息: %s", cleaned[:80])
-                return
-
-            data = json.loads(message)
+                data = {"raw": cleaned}
+            else:
+                try:
+                    data = json.loads(message)
+                except json.JSONDecodeError:
+                    data = {"raw": cleaned}
 
             if self.on_message_callback:
                 try:
@@ -369,9 +375,6 @@ class PolymarketWebSocketClient:
                 except Exception as exc:
                     logger.error("消息回调处理失败: %s", exc)
 
-        except json.JSONDecodeError as exc:
-            logger.debug("解析消息失败: %s", exc)
-            logger.debug("原始消息: %s", message)
         except Exception as exc:
             logger.error("处理消息时出错: %s", exc)
 

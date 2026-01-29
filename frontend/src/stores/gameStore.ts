@@ -6,8 +6,102 @@ import type {
   PlayByPlayEventData,
   GameEndEventData,
   AnalysisChunkEventData,
+  PolymarketInfoEventData,
+  PolymarketBookEventData,
 } from '@/types/sse'
 import type { PlayAction } from '@/types'
+
+interface BookLevel {
+  price: number
+  size: number
+}
+
+interface BookPriceSnapshot {
+  assetId: string
+  bestBid: number | null
+  bestAsk: number | null
+  bidSize: number | null
+  askSize: number | null
+  updatedAt: string | null
+}
+
+type BookPayload = {
+  asset_id?: string
+  assetId?: string
+  token_id?: string
+  tokenId?: string
+  event_type?: string
+  price_changes?: Array<{
+    asset_id?: string
+    price?: string | number
+    size?: string | number
+    side?: string
+    best_bid?: string | number
+    best_ask?: string | number
+  }>
+  bids?: unknown
+  asks?: unknown
+  timestamp?: string
+} & Record<string, unknown>
+
+function extractBookPayload(data: PolymarketBookEventData): BookPayload | null {
+  if (!data || typeof data !== 'object') return null
+
+  const hasDirectKeys =
+    'asset_id' in data ||
+    'assetId' in data ||
+    'token_id' in data ||
+    'tokenId' in data ||
+    'bids' in data ||
+    'asks' in data
+
+  if (hasDirectKeys) return data as BookPayload
+
+  const nested = data.data || data.payload || data.message
+  if (nested && typeof nested === 'object') {
+    return nested as BookPayload
+  }
+
+  return null
+}
+
+function parseBookLevels(raw: unknown): BookLevel[] {
+  if (!Array.isArray(raw)) return []
+
+  const levels: BookLevel[] = []
+  for (const item of raw) {
+    if (Array.isArray(item) && item.length >= 2) {
+      const price = Number(item[0])
+      const size = Number(item[1])
+      if (!Number.isNaN(price) && !Number.isNaN(size)) {
+        levels.push({ price, size })
+      }
+      continue
+    }
+
+    if (item && typeof item === 'object') {
+      const maybePrice = (item as { price?: number | string }).price
+      const maybeSize = (item as { size?: number | string }).size
+      const price = Number(maybePrice)
+      const size = Number(maybeSize)
+      if (!Number.isNaN(price) && !Number.isNaN(size)) {
+        levels.push({ price, size })
+      }
+    }
+  }
+
+  return levels
+}
+
+function getBestBid(levels: BookLevel[]): BookLevel | null {
+  if (levels.length === 0) return null
+  return levels.reduce((best, level) => (level.price > best.price ? level : best))
+}
+
+function getBestAsk(levels: BookLevel[]): BookLevel | null {
+  if (levels.length === 0) return null
+  return levels.reduce((best, level) => (level.price < best.price ? level : best))
+}
 
 export const useGameStore = defineStore('game', () => {
   // 状态
@@ -16,6 +110,9 @@ export const useGameStore = defineStore('game', () => {
   const playByPlayActions = ref<PlayAction[]>([])
   const gameEndData = ref<GameEndEventData | null>(null)
   const analysisChunks = ref<AnalysisChunkEventData[]>([])
+  const polymarketInfo = ref<PolymarketInfoEventData | null>(null)
+  const polymarketBook = ref<Record<string, BookPriceSnapshot>>({})
+  const polymarketBookUpdatedAt = ref<string | null>(null)
 
   // 计算属性
   const gameId = computed(() => scoreboard.value?.game_id ?? boxscore.value?.game_info.game_id ?? null)
@@ -92,6 +189,83 @@ export const useGameStore = defineStore('game', () => {
     analysisChunks.value = [...analysisChunks.value, data]
   }
 
+  function setPolymarketInfo(data: PolymarketInfoEventData) {
+    polymarketInfo.value = data
+  }
+
+  function updatePolymarketBook(data: PolymarketBookEventData) {
+    const payload = extractBookPayload(data)
+    if (!payload) return
+
+    if (Array.isArray(payload.price_changes)) {
+      const updatedAt = payload.timestamp
+        ? new Date(Number(payload.timestamp)).toISOString()
+        : new Date().toISOString()
+
+      const updates: Record<string, BookPriceSnapshot> = {}
+      for (const change of payload.price_changes) {
+        const assetId = change.asset_id
+        if (!assetId) continue
+
+        const bestBid = change.best_bid !== undefined ? Number(change.best_bid) : null
+        const bestAsk = change.best_ask !== undefined ? Number(change.best_ask) : null
+
+        updates[assetId] = {
+          assetId,
+          bestBid: Number.isNaN(bestBid) ? null : bestBid,
+          bestAsk: Number.isNaN(bestAsk) ? null : bestAsk,
+          bidSize: null,
+          askSize: null,
+          updatedAt,
+        }
+      }
+
+      if (Object.keys(updates).length > 0) {
+        polymarketBook.value = {
+          ...polymarketBook.value,
+          ...updates,
+        }
+        polymarketBookUpdatedAt.value = updatedAt
+      }
+
+      return
+    }
+
+    const assetId =
+      (payload.asset_id as string | undefined) ||
+      (payload.assetId as string | undefined) ||
+      (payload.token_id as string | undefined) ||
+      (payload.tokenId as string | undefined)
+
+    if (!assetId) return
+
+    const bids = parseBookLevels(payload.bids)
+    const asks = parseBookLevels(payload.asks)
+
+    const bestBid = getBestBid(bids)
+    const bestAsk = getBestAsk(asks)
+
+    const updatedAt = payload.timestamp
+      ? new Date(Number(payload.timestamp)).toISOString()
+      : new Date().toISOString()
+
+    const previous = polymarketBook.value[assetId]
+
+    polymarketBook.value = {
+      ...polymarketBook.value,
+      [assetId]: {
+        assetId,
+        bestBid: bestBid?.price ?? previous?.bestBid ?? null,
+        bestAsk: bestAsk?.price ?? previous?.bestAsk ?? null,
+        bidSize: bestBid?.size ?? previous?.bidSize ?? null,
+        askSize: bestAsk?.size ?? previous?.askSize ?? null,
+        updatedAt,
+      },
+    }
+
+    polymarketBookUpdatedAt.value = updatedAt
+  }
+
   function clearAnalysis() {
     analysisChunks.value = []
   }
@@ -102,6 +276,9 @@ export const useGameStore = defineStore('game', () => {
     playByPlayActions.value = []
     gameEndData.value = null
     analysisChunks.value = []
+    polymarketInfo.value = null
+    polymarketBook.value = {}
+    polymarketBookUpdatedAt.value = null
   }
 
   return {
@@ -111,6 +288,9 @@ export const useGameStore = defineStore('game', () => {
     playByPlayActions,
     gameEndData,
     analysisChunks,
+    polymarketInfo,
+    polymarketBook,
+    polymarketBookUpdatedAt,
     // 计算属性
     gameId,
     gameStatus,
@@ -125,6 +305,8 @@ export const useGameStore = defineStore('game', () => {
     setPlayByPlay,
     setGameEnd,
     appendAnalysisChunk,
+    setPolymarketInfo,
+    updatePolymarketBook,
     clearAnalysis,
     reset,
   }
