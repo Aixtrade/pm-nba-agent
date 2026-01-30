@@ -187,3 +187,57 @@ class PolymarketBatchOrderResponse(BaseModel):
         description="批量下单返回",
     )
 
+
+class PolymarketMarketPositionsRequest(BaseModel):
+    """Polymarket 市场持仓查询请求"""
+
+    condition_id: str = Field(
+        ...,
+        description="市场 condition_id",
+        examples=[
+            "0xdd22472e552920b8438158ea7238bfadfa4f736aa4cee91a6b86c39ead110917"
+        ],
+    )
+    user_address: str | None = Field(
+        default=None,
+        description="用户地址 (0x 开头)。为空时使用服务端默认",
+    )
+    proxy_address: str | None = Field(
+        default=None,
+        description="代理地址 (可选，覆盖服务端默认)",
+    )
+    outcomes: list[str] | None = Field(
+        default=None,
+        description="可选，市场双边 outcome 名称，用于补齐 0 持仓",
+    )
+    size_threshold: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="sizeThreshold 过滤值",
+    )
+    redeemable: bool | None = Field(
+        default=None,
+        description="是否仅返回可赎回持仓",
+    )
+    mergeable: bool | None = Field(
+        default=None,
+        description="是否仅返回可合并持仓",
+    )
+
+
+class PolymarketPositionSide(BaseModel):
+    """市场持仓单边信息"""
+
+    outcome: str = Field(..., description="Outcome 名称")
+    size: float = Field(..., description="持仓份额")
+    asset: str | None = Field(default=None, description="Token 资产 ID")
+
+
+class PolymarketMarketPositionsResponse(BaseModel):
+    """市场持仓查询响应"""
+
+    condition_id: str = Field(..., description="市场 condition_id")
+    user_address: str = Field(..., description="用户地址")
+    sides: list[PolymarketPositionSide] = Field(
+        ..., description="双边持仓份额"
+    )

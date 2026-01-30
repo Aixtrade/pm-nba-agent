@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useAuthStore, useGameStore, useToastStore } from '@/stores'
 
 const authStore = useAuthStore()
@@ -40,6 +40,8 @@ const sellPriceByToken = reactive<Record<string, string>>({})
 const submitting = reactive<Record<string, boolean>>({})
 const batchSubmitting = ref(false)
 const batchSize = ref('10')
+const positionSides = ref<Array<{ outcome: string; size: number; asset?: string | null }>>([])
+const positionsLoading = ref(false)
 
 const isBatchReady = computed(() => {
   if (rows.value.length === 0) return false
@@ -71,6 +73,11 @@ function formatTime(timestamp: string | null): string {
     minute: '2-digit',
     second: '2-digit',
   })
+}
+
+function formatSize(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '--'
+  return value.toFixed(2)
 }
 
 function getBuySize(tokenId: string): string {
@@ -149,6 +156,66 @@ function getPolymarketConfig() {
   return { privateKey, proxyAddress }
 }
 
+function getPolymarketUserAddress() {
+  const proxyAddress = localStorage.getItem(POLYMARKET_PROXY_ADDRESS)?.trim() ?? ''
+  return { userAddress: proxyAddress, proxyAddress }
+}
+
+function getMarketOutcomes(): string[] {
+  const info = polymarketInfo.value
+  if (!info) return []
+  const outcomes = info.market_info?.outcomes?.length
+    ? info.market_info.outcomes
+    : info.tokens.map(token => token.outcome)
+  return Array.from(new Set(outcomes.filter(Boolean)))
+}
+
+function getMarketConditionId(): string | null {
+  const info = polymarketInfo.value
+  if (!info) return null
+  return info.condition_id ?? info.market_info?.condition_id ?? null
+}
+
+async function fetchMarketPositions() {
+  if (!authStore.isAuthenticated) return
+  const conditionId = getMarketConditionId()
+  if (!conditionId) return
+
+  const outcomes = getMarketOutcomes()
+  const { userAddress, proxyAddress } = getPolymarketUserAddress()
+  if (!userAddress && !proxyAddress) {
+    return
+  }
+
+  positionsLoading.value = true
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/polymarket/positions/market`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authStore.token}`,
+      },
+      body: JSON.stringify({
+        condition_id: conditionId,
+        user_address: userAddress || proxyAddress,
+        outcomes,
+      }),
+    })
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => null)
+      throw new Error(data?.detail || '查询持仓失败')
+    }
+
+    const data = await response.json().catch(() => null)
+    positionSides.value = Array.isArray(data?.sides) ? data.sides : []
+  } catch (error) {
+    toastStore.showToast(error instanceof Error ? error.message : '查询持仓失败', 'error')
+  } finally {
+    positionsLoading.value = false
+  }
+}
+
 
 
 async function placeOrder(
@@ -209,6 +276,7 @@ async function placeOrder(
 
     await response.json().catch(() => null)
     toastStore.showToast('下单成功', 'success')
+    await fetchMarketPositions()
   } catch (error) {
     toastStore.showToast(error instanceof Error ? error.message : '下单失败', 'error')
   } finally {
@@ -283,12 +351,29 @@ async function placeBatchBuy() {
 
     await response.json().catch(() => null)
     toastStore.showToast('双边买入批量下单成功', 'success')
+    await fetchMarketPositions()
   } catch (error) {
     toastStore.showToast(error instanceof Error ? error.message : '批量下单失败', 'error')
   } finally {
     batchSubmitting.value = false
   }
 }
+
+watch(
+  () => [polymarketInfo.value?.condition_id, polymarketInfo.value?.market_info?.condition_id],
+  async () => {
+    await fetchMarketPositions()
+  }
+)
+
+watch(
+  () => authStore.isAuthenticated,
+  async isAuthed => {
+    if (isAuthed) {
+      await fetchMarketPositions()
+    }
+  }
+)
 </script>
 
 <template>
@@ -306,6 +391,30 @@ async function placeBatchBuy() {
 
       <div v-if="!authStore.isAuthenticated" class="mt-3 text-right text-xs text-amber-600/80">
         下单前请先登录
+      </div>
+
+      <div class="mt-3 rounded-lg border border-base-200/70 px-3 py-2">
+        <div class="flex items-center justify-between gap-3">
+          <div class="text-sm font-semibold">当前持仓</div>
+          <div class="text-xs text-base-content/60">
+            {{ positionsLoading ? '刷新中...' : '双边份额' }}
+          </div>
+        </div>
+        <div class="mt-2 grid grid-cols-2 gap-2 text-xs">
+          <div
+            v-for="side in positionSides"
+            :key="side.outcome"
+            class="rounded-md bg-base-100/60 px-2 py-2"
+          >
+            <div class="text-[11px] text-base-content/60">{{ side.outcome }}</div>
+            <div class="text-sm font-semibold text-base-content">
+              {{ formatSize(side.size) }}
+            </div>
+          </div>
+          <div v-if="positionSides.length === 0" class="col-span-2 text-center text-base-content/50">
+            暂无持仓数据
+          </div>
+        </div>
       </div>
 
       <div v-if="rows.length === 0" class="py-6 text-center text-base-content/50">

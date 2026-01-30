@@ -14,6 +14,10 @@ POLYMARKET_GAMMA_API_URL = os.getenv(
     "POLYMARKET_GAMMA_API_URL",
     "https://gamma-api.polymarket.com",
 )
+POLYMARKET_DATA_API_URL = os.getenv(
+    "POLYMARKET_DATA_API_URL",
+    "https://data-api.polymarket.com",
+)
 POLYMARKET_WSS_URL = os.getenv(
     "POLYMARKET_WSS_URL",
     "wss://ws-subscriptions-clob.polymarket.com",
