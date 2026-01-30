@@ -71,7 +71,7 @@ function clearPolymarketConfig() {
 </script>
 
 <template>
-  <header class="navbar app-header">
+  <header class="navbar app-header sticky top-0 z-50">
     <div class="w-full px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4 flex-nowrap">
       <div class="flex-1 min-w-0 flex items-center gap-3 flex-nowrap">
         <RouterLink to="/" class="btn btn-ghost text-xl font-bold">
