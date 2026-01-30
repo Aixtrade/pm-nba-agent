@@ -80,6 +80,34 @@ function formatSize(value: number | null | undefined): string {
   return value.toFixed(2)
 }
 
+function normalizeSides(sides: Array<{ outcome: string; size: number }>) {
+  return sides
+    .map(side => ({
+      outcome: String(side.outcome),
+      size: Number(side.size),
+    }))
+    .sort((a, b) => a.outcome.localeCompare(b.outcome))
+}
+
+function isSameSides(
+  current: Array<{ outcome: string; size: number }>,
+  next: Array<{ outcome: string; size: number }>
+) {
+  const a = normalizeSides(current)
+  const b = normalizeSides(next)
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i].outcome !== b[i].outcome) return false
+    if (Number.isNaN(a[i].size) || Number.isNaN(b[i].size)) return false
+    if (a[i].size !== b[i].size) return false
+  }
+  return true
+}
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
 function getBuySize(tokenId: string): string {
   return buySizeByToken[tokenId] ?? '10'
 }
@@ -176,7 +204,14 @@ function getMarketConditionId(): string | null {
   return info.condition_id ?? info.market_info?.condition_id ?? null
 }
 
-async function fetchMarketPositions() {
+async function fetchMarketPositions(options: {
+  retries?: number
+  delayMs?: number
+  retryOnEmpty?: boolean
+  retryAlways?: boolean
+  skipImmediate?: boolean
+  initialDelayMs?: number
+} = {}) {
   if (!authStore.isAuthenticated) return
   const conditionId = getMarketConditionId()
   if (!conditionId) return
@@ -187,28 +222,72 @@ async function fetchMarketPositions() {
     return
   }
 
-  positionsLoading.value = true
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/v1/polymarket/positions/market`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${authStore.token}`,
-      },
-      body: JSON.stringify({
-        condition_id: conditionId,
-        user_address: userAddress || proxyAddress,
-        outcomes,
-      }),
-    })
+  const retries = options.retries ?? 0
+  const delayMs = options.delayMs ?? 1000
+  const retryOnEmpty = options.retryOnEmpty ?? false
+  const retryAlways = options.retryAlways ?? false
+  const skipImmediate = options.skipImmediate ?? false
+  const initialDelayMs = options.initialDelayMs ?? delayMs
 
-    if (!response.ok) {
-      const data = await response.json().catch(() => null)
-      throw new Error(data?.detail || '查询持仓失败')
+  positionsLoading.value = true
+  let lastError: Error | null = null
+  const totalAttempts = Math.max(1, retries + 1)
+  const startAttempt = skipImmediate ? 1 : 0
+
+  try {
+    if (skipImmediate) {
+      await sleep(initialDelayMs)
     }
 
-    const data = await response.json().catch(() => null)
-    positionSides.value = Array.isArray(data?.sides) ? data.sides : []
+    for (let attempt = startAttempt; attempt < totalAttempts; attempt += 1) {
+      const step = attempt - startAttempt
+      if (step > 0) {
+        const backoff = delayMs * Math.pow(2, step - 1)
+        await sleep(backoff)
+      }
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/v1/polymarket/positions/market`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authStore.token}`,
+          },
+          body: JSON.stringify({
+            condition_id: conditionId,
+            user_address: userAddress || proxyAddress,
+            outcomes,
+          }),
+        })
+
+        if (!response.ok) {
+          const data = await response.json().catch(() => null)
+          throw new Error(data?.detail || '查询持仓失败')
+        }
+
+        const data = await response.json().catch(() => null)
+        const sides = Array.isArray(data?.sides) ? data.sides : []
+        const unchanged = isSameSides(positionSides.value, sides)
+        positionSides.value = sides
+
+        if (attempt < totalAttempts - 1) {
+          if (retryAlways && unchanged) {
+            continue
+          }
+          if (retryOnEmpty && sides.length === 0) {
+            continue
+          }
+        }
+
+        lastError = null
+        break
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('查询持仓失败')
+        if (attempt >= totalAttempts - 1) {
+          throw lastError
+        }
+      }
+    }
   } catch (error) {
     toastStore.showToast(error instanceof Error ? error.message : '查询持仓失败', 'error')
   } finally {
@@ -276,7 +355,14 @@ async function placeOrder(
 
     await response.json().catch(() => null)
     toastStore.showToast('下单成功', 'success')
-    await fetchMarketPositions()
+    void fetchMarketPositions({
+      retries: 2,
+      delayMs: 4000,
+      retryOnEmpty: true,
+      retryAlways: true,
+      skipImmediate: true,
+      initialDelayMs: 2000,
+    })
   } catch (error) {
     toastStore.showToast(error instanceof Error ? error.message : '下单失败', 'error')
   } finally {
@@ -351,7 +437,14 @@ async function placeBatchBuy() {
 
     await response.json().catch(() => null)
     toastStore.showToast('双边买入批量下单成功', 'success')
-    await fetchMarketPositions()
+    void fetchMarketPositions({
+      retries: 2,
+      delayMs: 4000,
+      retryOnEmpty: true,
+      retryAlways: true,
+      skipImmediate: true,
+      initialDelayMs: 2000,
+    })
   } catch (error) {
     toastStore.showToast(error instanceof Error ? error.message : '批量下单失败', 'error')
   } finally {
@@ -396,8 +489,16 @@ watch(
       <div class="mt-3 rounded-lg border border-base-200/70 px-3 py-2">
         <div class="flex items-center justify-between gap-3">
           <div class="text-sm font-semibold">当前持仓</div>
-          <div class="text-xs text-base-content/60">
-            {{ positionsLoading ? '刷新中...' : '双边份额' }}
+          <div class="flex items-center gap-2 text-xs text-base-content/60">
+            <span>{{ positionsLoading ? '刷新中...' : '双边份额' }}</span>
+            <button
+              class="btn btn-ghost btn-xs"
+              :disabled="positionsLoading"
+              @click="fetchMarketPositions()"
+              title="刷新持仓"
+            >
+              ↻
+            </button>
           </div>
         </div>
         <div class="mt-2 grid grid-cols-2 gap-2 text-xs">
