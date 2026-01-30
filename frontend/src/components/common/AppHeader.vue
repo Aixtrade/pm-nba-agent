@@ -2,13 +2,14 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSSE } from '@/composables/useSSE'
-import { useAuthStore } from '@/stores'
+import { useAuthStore, useConnectionStore } from '@/stores'
 import type { LiveStreamRequest } from '@/types/sse'
 import StreamConfig from '@/components/monitor/StreamConfig.vue'
 import ConnectionStatus from './ConnectionStatus.vue'
 
 const router = useRouter()
-const { connect, disconnect } = useSSE()
+const { connect, disconnect, reconnect } = useSSE()
+const connectionStore = useConnectionStore()
 const isConfigOpen = ref(false)
 const isPolymarketConfigOpen = ref(false)
 const authStore = useAuthStore()
@@ -25,6 +26,10 @@ function handleConnect(request: LiveStreamRequest) {
 
 function handleDisconnect() {
   disconnect()
+}
+
+function handleReconnect() {
+  reconnect()
 }
 
 function handleLogout() {
@@ -78,6 +83,13 @@ function clearPolymarketConfig() {
           NBA 实时监控
         </RouterLink>
         <ConnectionStatus />
+        <button
+          v-if="connectionStore.isError"
+          class="btn btn-error btn-xs"
+          @click="handleReconnect"
+        >
+          重新连接
+        </button>
       </div>
       <div class="flex-none flex items-center gap-2">
         <button

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
-type ToastType = 'success' | 'error' | 'info'
+type ToastType = 'success' | 'error' | 'info' | 'warning'
 
 type ToastItem = {
   id: number
@@ -39,6 +39,23 @@ export const useToastStore = defineStore('toast', () => {
     }
   }
 
+  // 便捷方法
+  function showSuccess(message: string, duration = DEFAULT_DURATION) {
+    showToast(message, 'success', duration)
+  }
+
+  function showError(message: string, duration = DEFAULT_DURATION) {
+    showToast(message, 'error', duration)
+  }
+
+  function showInfo(message: string, duration = DEFAULT_DURATION) {
+    showToast(message, 'info', duration)
+  }
+
+  function showWarning(message: string, duration = DEFAULT_DURATION) {
+    showToast(message, 'warning', duration)
+  }
+
   function clearAll() {
     toasts.value = []
     timeouts.forEach(timeout => window.clearTimeout(timeout))
@@ -48,6 +65,10 @@ export const useToastStore = defineStore('toast', () => {
   return {
     toasts,
     showToast,
+    showSuccess,
+    showError,
+    showInfo,
+    showWarning,
     removeToast,
     clearAll,
   }

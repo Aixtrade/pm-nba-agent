@@ -86,6 +86,12 @@ function closeToast(id: number) {
   border-color: rgba(148, 163, 184, 0.55);
 }
 
+.toast-card--warning {
+  background: rgba(245, 158, 11, 0.18);
+  color: #92400e;
+  border-color: rgba(245, 158, 11, 0.55);
+}
+
 .toast-message {
   flex: 1;
 }
