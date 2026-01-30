@@ -117,8 +117,8 @@ watch(
 </script>
 
 <template>
-  <div class="card glass-card">
-    <div class="card-body">
+  <div class="card glass-card h-full">
+    <div class="card-body flex min-h-0 flex-col">
       <div class="flex items-start justify-between gap-4">
         <div class="flex flex-wrap items-center gap-2">
           <h3 class="card-title">Agent 分析</h3>
@@ -151,7 +151,7 @@ watch(
         </label>
       </div>
 
-      <div v-if="analysisChunks.length === 0" class="py-6 text-center text-base-content/50">
+      <div v-if="analysisChunks.length === 0" class="flex-1 py-6 text-center text-base-content/50">
         <span v-if="connectionStore.isConnected">等待分析输出...</span>
         <span v-else>未连接，暂无分析</span>
       </div>
@@ -159,7 +159,7 @@ watch(
       <div
         v-else
         ref="panelRef"
-        class="mt-3 max-h-[70vh] space-y-4 overflow-y-auto pr-1"
+        class="mt-3 flex-1 min-h-0 space-y-4 overflow-y-auto pr-1"
       >
         <div
           v-for="group in groupedRounds"

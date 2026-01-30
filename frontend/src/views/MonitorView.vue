@@ -16,8 +16,13 @@ const gameStore = useGameStore()
     <!-- 数据展示区域 -->
     <div
       v-if="connectionStore.isConnected || gameStore.scoreboard || gameStore.boxscore"
-      class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_440px] gap-6 items-start"
+      class="grid grid-cols-1 xl:grid-cols-[360px_minmax(0,1fr)_440px] gap-6 items-start"
     >
+      <!-- Agent 分析左侧边栏 -->
+      <div class="space-y-6 xl:h-[calc(100vh-6rem)]">
+        <AgentAnalysisPanel />
+      </div>
+
       <div class="space-y-6">
         <!-- 比分板 -->
         <ScoreBoard />
@@ -41,10 +46,9 @@ const gameStore = useGameStore()
         <PlayByPlay />
       </div>
 
-      <!-- Agent 分析侧边栏 -->
+      <!-- Polymarket 侧边栏 -->
       <div class="space-y-6">
         <PolymarketBookPanel />
-        <AgentAnalysisPanel />
       </div>
     </div>
 
