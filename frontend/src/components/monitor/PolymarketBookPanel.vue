@@ -33,7 +33,10 @@ const rows = computed(() => {
   })
 })
 
-const sizeByToken = reactive<Record<string, string>>({})
+const buySizeByToken = reactive<Record<string, string>>({})
+const buyPriceByToken = reactive<Record<string, string>>({})
+const sellSizeByToken = reactive<Record<string, string>>({})
+const sellPriceByToken = reactive<Record<string, string>>({})
 const submitting = reactive<Record<string, boolean>>({})
 const batchSubmitting = ref(false)
 const batchSize = ref('10')
@@ -42,7 +45,7 @@ const isBatchReady = computed(() => {
   if (rows.value.length === 0) return false
   return rows.value.every(row => {
     const priceOk = row.bestAsk !== null && !Number.isNaN(row.bestAsk)
-    const sizeValue = Number(sizeByToken[row.tokenId] ?? '10')
+    const sizeValue = Number(buySizeByToken[row.tokenId] ?? '10')
     const sizeOk = !Number.isNaN(sizeValue) && sizeValue > 0
     return priceOk && sizeOk
   })
@@ -70,25 +73,74 @@ function formatTime(timestamp: string | null): string {
   })
 }
 
-function getSize(tokenId: string): string {
-  return sizeByToken[tokenId] ?? '10'
+function getBuySize(tokenId: string): string {
+  return buySizeByToken[tokenId] ?? '10'
 }
 
-function setSize(tokenId: string, value: string) {
-  sizeByToken[tokenId] = value
+function setBuySize(tokenId: string, value: string) {
+  buySizeByToken[tokenId] = value
 }
 
-function setAllSizes(value: string) {
+function getSellSize(tokenId: string): string {
+  return sellSizeByToken[tokenId] ?? '10'
+}
+
+function setSellSize(tokenId: string, value: string) {
+  sellSizeByToken[tokenId] = value
+}
+
+function setAllBuySizes(value: string) {
   rows.value.forEach(row => {
-    sizeByToken[row.tokenId] = value
+    buySizeByToken[row.tokenId] = value
   })
 }
 
-function getPrice(
+function getBuyPrice(tokenId: string, defaultPrice: number | null): string {
+  if (buyPriceByToken[tokenId] !== undefined) {
+    return buyPriceByToken[tokenId]
+  }
+  return defaultPrice !== null ? defaultPrice.toString() : ''
+}
+
+function getSellPrice(tokenId: string, defaultPrice: number | null): string {
+  if (sellPriceByToken[tokenId] !== undefined) {
+    return sellPriceByToken[tokenId]
+  }
+  return defaultPrice !== null ? defaultPrice.toString() : ''
+}
+
+function setBuyPrice(tokenId: string, value: string) {
+  buyPriceByToken[tokenId] = value
+}
+
+function setSellPrice(tokenId: string, value: string) {
+  sellPriceByToken[tokenId] = value
+}
+
+function getOrderPrice(
   side: 'BUY' | 'SELL',
-  row: { bestBid: number | null; bestAsk: number | null }
-) {
-  return side === 'BUY' ? row.bestAsk : row.bestBid
+  row: { tokenId: string; bestBid: number | null; bestAsk: number | null }
+): number | null {
+  if (side === 'BUY') {
+    const inputPrice = buyPriceByToken[row.tokenId]
+    if (inputPrice !== undefined && inputPrice !== '') {
+      const parsed = Number(inputPrice)
+      return Number.isNaN(parsed) ? null : parsed
+    }
+    return row.bestAsk
+  } else {
+    const inputPrice = sellPriceByToken[row.tokenId]
+    if (inputPrice !== undefined && inputPrice !== '') {
+      const parsed = Number(inputPrice)
+      return Number.isNaN(parsed) ? null : parsed
+    }
+    return row.bestBid
+  }
+}
+
+function getOrderSize(side: 'BUY' | 'SELL', tokenId: string): number {
+  const sizeStr = side === 'BUY' ? getBuySize(tokenId) : getSellSize(tokenId)
+  return Number(sizeStr)
 }
 
 function getPolymarketConfig() {
@@ -108,9 +160,9 @@ async function placeOrder(
     return
   }
 
-  const price = getPrice(side, row)
+  const price = getOrderPrice(side, row)
   if (price === null || Number.isNaN(price)) {
-    toastStore.showToast('暂无可用价格', 'error')
+    toastStore.showToast('请输入有效价格', 'error')
     return
   }
 
@@ -124,9 +176,9 @@ async function placeOrder(
     return
   }
 
-  const sizeValue = Number(getSize(row.tokenId))
+  const sizeValue = getOrderSize(side, row.tokenId)
   if (!sizeValue || Number.isNaN(sizeValue) || sizeValue <= 0) {
-    toastStore.showToast('请输入正确的购买份数', 'error')
+    toastStore.showToast('请输入正确的份数', 'error')
     return
   }
 
@@ -187,7 +239,7 @@ async function placeBatchBuy() {
 
   const orders = rows.value.map(row => {
     const price = row.bestAsk
-    const sizeValue = Number(getSize(row.tokenId))
+    const sizeValue = Number(getBuySize(row.tokenId))
     return {
       token_id: row.tokenId,
       side: 'BUY',
@@ -296,30 +348,65 @@ async function placeBatchBuy() {
             </div>
           </div>
 
-          <div class="mt-3 grid grid-cols-[1fr_auto_auto] gap-2 items-center">
-            <input
-              :value="getSize(row.tokenId)"
-              type="number"
-              min="0"
-              step="1"
-              class="input input-bordered input-sm w-full"
-              placeholder="份数"
-              @input="setSize(row.tokenId, ($event.target as HTMLInputElement).value)"
-            />
-            <button
-              class="btn btn-sm btn-success"
-              :disabled="submitting[row.tokenId] || row.bestAsk === null"
-              @click="placeOrder(row, 'BUY')"
-            >
-              买入@卖价
-            </button>
-            <button
-              class="btn btn-sm btn-outline"
-              :disabled="submitting[row.tokenId] || row.bestBid === null"
-              @click="placeOrder(row, 'SELL')"
-            >
-              卖出@买价
-            </button>
+          <div class="mt-3 space-y-2">
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-emerald-700/70 font-medium w-8">买入</span>
+              <input
+                :value="getBuySize(row.tokenId)"
+                type="number"
+                min="0"
+                step="1"
+                class="input input-bordered input-sm w-20"
+                placeholder="份数"
+                @input="setBuySize(row.tokenId, ($event.target as HTMLInputElement).value)"
+              />
+              <input
+                :value="getBuyPrice(row.tokenId, row.bestAsk)"
+                type="number"
+                min="0"
+                max="1"
+                step="0.001"
+                class="input input-bordered input-sm w-24"
+                placeholder="价格"
+                @input="setBuyPrice(row.tokenId, ($event.target as HTMLInputElement).value)"
+              />
+              <button
+                class="btn btn-sm btn-success flex-1"
+                :disabled="submitting[row.tokenId]"
+                @click="placeOrder(row, 'BUY')"
+              >
+                买入
+              </button>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-rose-700/70 font-medium w-8">卖出</span>
+              <input
+                :value="getSellSize(row.tokenId)"
+                type="number"
+                min="0"
+                step="1"
+                class="input input-bordered input-sm w-20"
+                placeholder="份数"
+                @input="setSellSize(row.tokenId, ($event.target as HTMLInputElement).value)"
+              />
+              <input
+                :value="getSellPrice(row.tokenId, row.bestBid)"
+                type="number"
+                min="0"
+                max="1"
+                step="0.001"
+                class="input input-bordered input-sm w-24"
+                placeholder="价格"
+                @input="setSellPrice(row.tokenId, ($event.target as HTMLInputElement).value)"
+              />
+              <button
+                class="btn btn-sm btn-error flex-1"
+                :disabled="submitting[row.tokenId]"
+                @click="placeOrder(row, 'SELL')"
+              >
+                卖出
+              </button>
+            </div>
           </div>
         </div>
         <div class="rounded-lg border border-base-200/70 px-3 py-3">
@@ -340,7 +427,7 @@ async function placeBatchBuy() {
             <button
               class="btn btn-sm btn-outline"
               :disabled="batchSubmitting"
-              @click="setAllSizes(batchSize)"
+              @click="setAllBuySizes(batchSize)"
             >
               一键填充
             </button>
@@ -356,13 +443,13 @@ async function placeBatchBuy() {
                 卖价 {{ formatPrice(row.bestAsk) }}
               </div>
               <input
-                :value="getSize(row.tokenId)"
+                :value="getBuySize(row.tokenId)"
                 type="number"
                 min="0"
                 step="1"
                 class="input input-bordered input-sm w-24"
                 placeholder="份数"
-                @input="setSize(row.tokenId, ($event.target as HTMLInputElement).value)"
+                @input="setBuySize(row.tokenId, ($event.target as HTMLInputElement).value)"
               />
             </div>
           </div>
