@@ -38,19 +38,19 @@ const buyPriceByToken = reactive<Record<string, string>>({})
 const sellSizeByToken = reactive<Record<string, string>>({})
 const sellPriceByToken = reactive<Record<string, string>>({})
 const submitting = reactive<Record<string, boolean>>({})
-const batchSubmitting = ref(false)
-const batchSize = ref('10')
 const positionSides = ref<Array<{ outcome: string; size: number; asset?: string | null }>>([])
 const positionsLoading = ref(false)
 
-const isBatchReady = computed(() => {
-  if (rows.value.length === 0) return false
-  return rows.value.every(row => {
-    const priceOk = row.bestAsk !== null && !Number.isNaN(row.bestAsk)
-    const sizeValue = Number(buySizeByToken[row.tokenId] ?? '10')
-    const sizeOk = !Number.isNaN(sizeValue) && sizeValue > 0
-    return priceOk && sizeOk
+const positionSizeByOutcome = computed(() => {
+  const map: Record<string, number> = {}
+  positionSides.value.forEach(side => {
+    const outcome = String(side.outcome)
+    const size = Number(side.size)
+    if (!Number.isNaN(size)) {
+      map[outcome] = size
+    }
   })
+  return map
 })
 
 
@@ -124,10 +124,10 @@ function setSellSize(tokenId: string, value: string) {
   sellSizeByToken[tokenId] = value
 }
 
-function setAllBuySizes(value: string) {
-  rows.value.forEach(row => {
-    buySizeByToken[row.tokenId] = value
-  })
+function setQuickSellSize(outcome: string, tokenId: string, ratio: number) {
+  const baseSize = positionSizeByOutcome.value[outcome] ?? 0
+  const sizeValue = Math.max(0, baseSize * ratio)
+  setSellSize(tokenId, sizeValue.toFixed(2))
 }
 
 function getBuyPrice(tokenId: string, defaultPrice: number | null): string {
@@ -370,86 +370,9 @@ async function placeOrder(
   }
 }
 
-async function placeBatchBuy() {
-  if (!authStore.isAuthenticated) {
-    toastStore.showToast('请先登录获取访问令牌', 'error')
-    return
-  }
-
-  if (rows.value.length === 0) {
-    toastStore.showToast('暂无可用盘口', 'error')
-    return
-  }
-
-  const { privateKey, proxyAddress } = getPolymarketConfig()
-  if (!privateKey) {
-    toastStore.showToast('请先在顶部配置 Polymarket 私钥', 'error')
-    return
-  }
-  if (!proxyAddress) {
-    toastStore.showToast('请先在顶部配置 Polymarket 代理地址', 'error')
-    return
-  }
-
-  const orders = rows.value.map(row => {
-    const price = row.bestAsk
-    const sizeValue = Number(getBuySize(row.tokenId))
-    return {
-      token_id: row.tokenId,
-      side: 'BUY',
-      price,
-      size: sizeValue,
-      order_type: ORDER_TYPE,
-      private_key: privateKey,
-      proxy_address: proxyAddress,
-    }
-  })
-
-  const invalidOrder = orders.find(order => {
-    return (
-      order.price === null ||
-      Number.isNaN(order.price) ||
-      Number.isNaN(order.size) ||
-      order.size <= 0
-    )
-  })
-  if (invalidOrder) {
-    toastStore.showToast('请确认双边卖价与份数有效', 'error')
-    return
-  }
-
-  batchSubmitting.value = true
-
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/v1/polymarket/orders/batch`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${authStore.token}`,
-      },
-      body: JSON.stringify({ orders }),
-    })
-
-    if (!response.ok) {
-      const data = await response.json().catch(() => null)
-      throw new Error(data?.detail || '批量下单失败')
-    }
-
-    await response.json().catch(() => null)
-    toastStore.showToast('双边买入批量下单成功', 'success')
-    void fetchMarketPositions({
-      retries: 2,
-      delayMs: 4000,
-      retryOnEmpty: true,
-      retryAlways: true,
-      skipImmediate: true,
-      initialDelayMs: 2000,
-    })
-  } catch (error) {
-    toastStore.showToast(error instanceof Error ? error.message : '批量下单失败', 'error')
-  } finally {
-    batchSubmitting.value = false
-  }
+function getQuickSellDisabled(outcome: string) {
+  const sizeValue = positionSizeByOutcome.value[outcome] ?? 0
+  return !sizeValue || Number.isNaN(sizeValue) || sizeValue <= 0
 }
 
 watch(
@@ -501,21 +424,21 @@ watch(
             </button>
           </div>
         </div>
-        <div class="mt-2 grid grid-cols-2 gap-2 text-xs">
-          <div
-            v-for="side in positionSides"
-            :key="side.outcome"
-            class="rounded-md bg-base-100/60 px-2 py-2"
-          >
-            <div class="text-[11px] text-base-content/60">{{ side.outcome }}</div>
-            <div class="text-sm font-semibold text-base-content">
-              {{ formatSize(side.size) }}
-            </div>
-          </div>
-          <div v-if="positionSides.length === 0" class="col-span-2 text-center text-base-content/50">
-            暂无持仓数据
+      <div class="mt-2 grid grid-cols-2 gap-2 text-xs">
+        <div
+          v-for="side in positionSides"
+          :key="side.outcome"
+          class="rounded-md bg-base-100/60 px-2 py-2"
+        >
+          <div class="text-[11px] text-base-content/60">{{ side.outcome }}</div>
+          <div class="text-sm font-semibold text-base-content">
+            {{ formatSize(side.size) }}
           </div>
         </div>
+        <div v-if="positionSides.length === 0" class="col-span-2 text-center text-base-content/50">
+          暂无持仓数据
+        </div>
+      </div>
       </div>
 
       <div v-if="rows.length === 0" class="py-6 text-center text-base-content/50">
@@ -588,92 +511,64 @@ watch(
                 买入
               </button>
             </div>
-            <div class="flex items-center gap-2">
-              <span class="text-xs text-rose-700/70 font-medium w-8">卖出</span>
-              <input
-                :value="getSellSize(row.tokenId)"
-                type="number"
-                min="0"
-                step="1"
-                class="input input-bordered input-sm w-20"
-                placeholder="份数"
-                @input="setSellSize(row.tokenId, ($event.target as HTMLInputElement).value)"
-              />
-              <input
-                :value="getSellPrice(row.tokenId, row.bestBid)"
-                type="number"
-                min="0"
-                max="1"
-                step="0.001"
-                class="input input-bordered input-sm w-24"
-                placeholder="价格"
-                @input="setSellPrice(row.tokenId, ($event.target as HTMLInputElement).value)"
-              />
-              <button
-                class="btn btn-sm btn-error flex-1"
-                :disabled="submitting[row.tokenId]"
-                @click="placeOrder(row, 'SELL')"
-              >
-                卖出
-              </button>
-            </div>
-          </div>
-        </div>
-        <div class="rounded-lg border border-base-200/70 px-3 py-3">
-          <div class="flex items-center justify-between gap-3">
-            <div class="text-sm font-semibold">双边买入批量下单</div>
-            <div class="text-xs text-base-content/60">使用当前卖价</div>
-          </div>
-          <div class="mt-3 flex flex-wrap items-center gap-2">
-            <div class="text-xs text-base-content/60">统一份数</div>
-            <input
-              v-model="batchSize"
-              type="number"
-              min="0"
-              step="1"
-              class="input input-bordered input-sm w-28"
-              placeholder="份数"
-            />
-            <button
-              class="btn btn-sm btn-outline"
-              :disabled="batchSubmitting"
-              @click="setAllBuySizes(batchSize)"
-            >
-              一键填充
-            </button>
-          </div>
-          <div class="mt-3 space-y-2">
-            <div
-              v-for="row in rows"
-              :key="`batch-${row.tokenId}`"
-              class="grid grid-cols-[1fr_auto_auto] items-center gap-2"
-            >
-              <div class="text-sm">{{ row.outcome }}</div>
-              <div class="text-xs text-base-content/60">
-                卖价 {{ formatPrice(row.bestAsk) }}
+            <div class="flex flex-col gap-2">
+              <div class="flex items-center gap-2">
+                <span class="text-xs text-rose-700/70 font-medium w-8">卖出</span>
+                <input
+                  :value="getSellSize(row.tokenId)"
+                  type="number"
+                  min="0"
+                  step="1"
+                  class="input input-bordered input-sm w-20"
+                  placeholder="份数"
+                  @input="setSellSize(row.tokenId, ($event.target as HTMLInputElement).value)"
+                />
+                <input
+                  :value="getSellPrice(row.tokenId, row.bestBid)"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.001"
+                  class="input input-bordered input-sm w-24"
+                  placeholder="价格"
+                  @input="setSellPrice(row.tokenId, ($event.target as HTMLInputElement).value)"
+                />
+                <button
+                  class="btn btn-sm btn-error flex-1"
+                  :disabled="submitting[row.tokenId]"
+                  @click="placeOrder(row, 'SELL')"
+                >
+                  卖出
+                </button>
               </div>
-              <input
-                :value="getBuySize(row.tokenId)"
-                type="number"
-                min="0"
-                step="1"
-                class="input input-bordered input-sm w-24"
-                placeholder="份数"
-                @input="setBuySize(row.tokenId, ($event.target as HTMLInputElement).value)"
-              />
+              <div class="flex items-center gap-2 text-[11px] text-base-content/60">
+                <span class="w-8">快速</span>
+                <button
+                  class="btn btn-xs btn-ghost"
+                  :disabled="getQuickSellDisabled(row.outcome)"
+                  @click="setQuickSellSize(row.outcome, row.tokenId, 0.25)"
+                >
+                  25%
+                </button>
+                <button
+                  class="btn btn-xs btn-ghost"
+                  :disabled="getQuickSellDisabled(row.outcome)"
+                  @click="setQuickSellSize(row.outcome, row.tokenId, 0.5)"
+                >
+                  50%
+                </button>
+                <button
+                  class="btn btn-xs btn-ghost"
+                  :disabled="getQuickSellDisabled(row.outcome)"
+                  @click="setQuickSellSize(row.outcome, row.tokenId, 1)"
+                >
+                  MAX
+                </button>
+                <span class="text-[10px] text-base-content/50">
+                  可用 {{ formatSize(positionSizeByOutcome[row.outcome] ?? 0) }}
+                </span>
+              </div>
             </div>
-          </div>
-          <div class="mt-3 flex items-center justify-between gap-3">
-            <div class="text-xs text-base-content/60">
-              需要两边都有卖价与有效份数
-            </div>
-            <button
-              class="btn btn-sm btn-primary"
-              :disabled="batchSubmitting || !isBatchReady"
-              @click="placeBatchBuy"
-            >
-              双边买入
-            </button>
           </div>
         </div>
       </div>
