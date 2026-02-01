@@ -3,6 +3,8 @@
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Optional
 
+from loguru import logger
+
 from ..cache import CacheManager
 from ..rate_limiter import RateLimiter
 
@@ -58,7 +60,7 @@ class BaseCollector(ABC):
             cached = self.cache.get(key)
             if cached is not None:
                 if verbose:
-                    print(f"  ✓ 使用缓存: {key}")
+                    logger.info("使用缓存: {}", key)
                 return cached
 
         # 2. 限流
@@ -67,7 +69,7 @@ class BaseCollector(ABC):
         # 3. 调用API
         try:
             if verbose:
-                print(f"  → API 调用: {key}")
+                logger.info("API 调用: {}", key)
             data = fetch_func()
 
             # 4. 缓存结果
@@ -78,5 +80,5 @@ class BaseCollector(ABC):
 
         except Exception as e:
             if verbose:
-                print(f"  ❌ API 调用失败: {e}")
+                logger.error("API 调用失败: {}", e)
             return None

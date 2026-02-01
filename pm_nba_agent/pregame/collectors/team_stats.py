@@ -2,6 +2,7 @@
 
 from typing import Optional
 
+from loguru import logger
 from nba_api.stats.endpoints import leaguedashteamstats, teamdashboardbygeneralsplits
 
 from ..models.team_data import HomeAwaySplits, TeamStatistics
@@ -74,7 +75,7 @@ class TeamStatsCollector(BaseCollector):
 
         if team_basic.empty or team_advanced.empty:
             if verbose:
-                print(f"  ❌ 未找到球队 {team_id} 的统计数据")
+                logger.warning("未找到球队 {} 的统计数据", team_id)
             return None
 
         basic_row = team_basic.iloc[0]

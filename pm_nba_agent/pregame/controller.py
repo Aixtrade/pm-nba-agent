@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from loguru import logger
+
 from .analyzers import KeyFactorsAnalyzer, MatchupAnalyzer, StrengthComparator, TeamFormAnalyzer
 from .cache import CacheManager
 from .collectors import GameLogCollector, MatchupHistoryCollector, StandingsCollector, TeamStatsCollector
@@ -38,13 +40,13 @@ class PregameController:
     ) -> Optional[PregameReport]:
         """从 Polymarket URL 生成赛前分析报告（MVP）。"""
         if verbose:
-            print("开始赛前分析...")
-            print(f"URL: {url}")
+            logger.info("开始赛前分析...")
+            logger.info("URL: {}", url)
 
         event_info = parse_polymarket_url(url)
         if not event_info:
             if verbose:
-                print("❌ URL 解析失败")
+                logger.error("URL 解析失败")
             return None
 
         team1 = get_team_info(event_info.team1_abbr)
@@ -52,31 +54,31 @@ class PregameController:
 
         if not team1 or not team2:
             if verbose:
-                print("❌ 球队信息获取失败")
+                logger.error("球队信息获取失败")
             return None
 
         if verbose:
-            print(f"✓ 解析成功: {team1.full_name} vs {team2.full_name}")
-            print("\n收集数据...")
+            logger.info("解析成功: {} vs {}", team1.full_name, team2.full_name)
+            logger.info("收集数据...")
 
         team1_data = self._collect_team_data(team1, season, verbose)
         team2_data = self._collect_team_data(team2, season, verbose)
 
         if not team1_data or not team2_data:
             if verbose:
-                print("❌ 球队数据收集失败")
+                logger.error("球队数据收集失败")
             return None
 
         home_data = team2_data
         away_data = team1_data
 
         if verbose:
-            print("\n分析对阵历史...")
+            logger.info("分析对阵历史...")
 
         h2h = self.matchup_collector.collect(team1.id, team2.id, season, verbose)
 
         if verbose:
-            print("\n执行分析...")
+            logger.info("执行分析...")
 
         matchup_analysis = self.matchup_analyzer.analyze(home_data, away_data, h2h)
         strength_comparison = self.strength_comparator.compare(home_data, away_data)
@@ -97,7 +99,7 @@ class PregameController:
         )
 
         if verbose:
-            print("\n✓ 分析完成")
+            logger.info("分析完成")
 
         return report
 
@@ -109,10 +111,14 @@ class PregameController:
     ) -> Optional[TeamPregameData]:
         """收集单支球队的赛前数据。"""
         if verbose:
-            print(f"  - {team_info.full_name}")
+            logger.info("{}", team_info.full_name)
 
         standings_map = self.standings_collector.collect(season, verbose)
-        standings = standings_map.get(team_info.id) if standings_map else self._default_standings()
+        standings = None
+        if standings_map:
+            standings = standings_map.get(team_info.id)
+        if standings is None:
+            standings = self._default_standings()
 
         recent_games = self.gamelog_collector.collect(team_info.id, season, last_n=10, verbose=verbose) or []
         recent_form = self.form_analyzer.analyze_recent_form(recent_games)

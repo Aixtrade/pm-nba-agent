@@ -1,8 +1,10 @@
 """NBA 逐回合数据获取"""
 
 from typing import Optional
-from nba_api.live.nba.endpoints import playbyplay
 import time
+
+from loguru import logger
+from nba_api.live.nba.endpoints import playbyplay
 
 
 def get_playbyplay_data(game_id: str, limit: int = 20) -> Optional[list[dict]]:
@@ -65,7 +67,7 @@ def get_playbyplay_data(game_id: str, limit: int = 20) -> Optional[list[dict]]:
         return result
 
     except Exception as e:
-        print(f"获取逐回合数据失败: {e}")
+        logger.error("获取逐回合数据失败: {}", e)
         return None
 
 
@@ -120,5 +122,5 @@ def get_playbyplay_since(game_id: str, since_action_number: int = 0) -> Optional
         return result
 
     except Exception as e:
-        print(f"获取增量逐回合数据失败: {e}")
+        logger.error("获取增量逐回合数据失败: {}", e)
         return None

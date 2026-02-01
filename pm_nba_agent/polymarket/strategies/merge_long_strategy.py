@@ -45,15 +45,13 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Optional
+
+from loguru import logger
 
 from .base import BaseStrategy, TradingSignal, SignalType
 from .registry import StrategyRegistry
 from ..models import MarketSnapshot, OrderBookContext, PositionContext
-
-
-logger = logging.getLogger(__name__)
 
 
 @StrategyRegistry.register("merge_long")

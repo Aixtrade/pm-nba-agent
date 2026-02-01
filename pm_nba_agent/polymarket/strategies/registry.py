@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Callable, Optional, Type
 
+from loguru import logger
+
 from .base import BaseStrategy
-
-
-logger = logging.getLogger(__name__)
 
 
 class StrategyRegistry:
@@ -55,13 +53,13 @@ class StrategyRegistry:
         def decorator(strategy_cls: Type[BaseStrategy]) -> Type[BaseStrategy]:
             if strategy_id in cls._strategies:
                 logger.warning(
-                    "策略 %s 已注册，将被覆盖: %s -> %s",
+                    "策略 {} 已注册，将被覆盖: {} -> {}",
                     strategy_id,
                     cls._strategies[strategy_id].__name__,
                     strategy_cls.__name__,
                 )
             cls._strategies[strategy_id] = strategy_cls
-            logger.debug("已注册策略: %s -> %s", strategy_id, strategy_cls.__name__)
+            logger.debug("已注册策略: {} -> {}", strategy_id, strategy_cls.__name__)
             return strategy_cls
 
         return decorator
@@ -81,7 +79,7 @@ class StrategyRegistry:
 
         strategy_cls = cls._strategies.get(strategy_id)
         if strategy_cls is None:
-            logger.error("策略未注册: %s", strategy_id)
+            logger.error("策略未注册: {}", strategy_id)
             return None
 
         try:
@@ -89,7 +87,7 @@ class StrategyRegistry:
             cls._instances[strategy_id] = instance
             return instance
         except Exception as exc:
-            logger.error("策略实例化失败: %s - %s", strategy_id, exc)
+            logger.error("策略实例化失败: {} - {}", strategy_id, exc)
             return None
 
     @classmethod

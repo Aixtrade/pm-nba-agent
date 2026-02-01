@@ -1,7 +1,9 @@
 """对阵历史数据收集器（简化版）。"""
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, cast
+
+from loguru import logger
 
 from nba_api.stats.endpoints import leaguegamefinder
 from nba_api.stats.static import teams
@@ -87,7 +89,8 @@ class MatchupHistoryCollector(BaseCollector):
                 total = wins + losses
 
                 # 平均分差
-                avg_margin = float(matchup_games['PLUS_MINUS'].mean()) if not matchup_games.empty else 0.0
+                avg_margin_raw = matchup_games["PLUS_MINUS"].mean()
+                avg_margin = cast(float, avg_margin_raw) if avg_margin_raw is not None else 0.0
 
                 # 上次交手日期
                 last_meeting = str(matchup_games.iloc[0]['GAME_DATE']) if not matchup_games.empty else None
@@ -101,7 +104,7 @@ class MatchupHistoryCollector(BaseCollector):
 
             except Exception as e:
                 if verbose:
-                    print(f"  ⚠️  对阵历史获取失败: {e}")
+                    logger.warning("对阵历史获取失败: {}", e)
                 return self._empty_record()
 
         result = self._fetch_with_cache(key, fetch, verbose)

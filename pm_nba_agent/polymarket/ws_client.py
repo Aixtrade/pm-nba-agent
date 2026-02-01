@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-import logging
+from loguru import logger
 import threading
 from importlib import import_module
 from typing import Any, Callable, Optional
@@ -13,9 +13,6 @@ from typing import Any, Callable, Optional
 WebSocketApp = Any
 
 from .config import POLYMARKET_WSS_URL
-
-
-logger = logging.getLogger(__name__)
 
 
 class PolymarketWebSocketClient:
@@ -48,7 +45,7 @@ class PolymarketWebSocketClient:
         self.api_passphrase = api_passphrase
         normalized_channel = channel.lower().strip()
         if normalized_channel != self.MARKET_CHANNEL:
-            logger.warning("仅支持 market channel，已忽略 channel=%s", normalized_channel)
+            logger.warning("仅支持 market channel，已忽略 channel={}", normalized_channel)
             normalized_channel = self.MARKET_CHANNEL
         self.channel = normalized_channel
 
@@ -77,7 +74,7 @@ class PolymarketWebSocketClient:
             self._event_loop = asyncio.get_event_loop()
             self.ws = self._create_ws_app()
 
-            logger.info("正在连接 Polymarket WebSocket: %s", self.wss_url)
+            logger.info("正在连接 Polymarket WebSocket: {}", self.wss_url)
 
             self._connection_ready.clear()
             self._stop_reconnect.clear()
@@ -99,7 +96,7 @@ class PolymarketWebSocketClient:
             return True
 
         except Exception as exc:
-            logger.error("创建 WebSocket 连接失败: %s", exc)
+            logger.error("创建 WebSocket 连接失败: {}", exc)
             if self.on_error_callback:
                 self.on_error_callback(exc)
             return False
@@ -115,7 +112,7 @@ class PolymarketWebSocketClient:
                     continue
                 ws.run_forever()
             except Exception as exc:
-                logger.error("WebSocket 运行异常: %s", exc)
+                logger.error("WebSocket 运行异常: {}", exc)
 
             self.is_connected = False
             self._stop_heartbeat.set()
@@ -136,7 +133,7 @@ class PolymarketWebSocketClient:
                 self.RECONNECT_BASE_DELAY * (2 ** (self._reconnect_attempts - 1)),
             )
             logger.warning(
-                "WebSocket 连接断开，%ss 后重试 (第 %s 次)",
+                "WebSocket 连接断开，{}s 后重试 (第 {} 次)",
                 delay,
                 self._reconnect_attempts,
             )
@@ -191,7 +188,7 @@ class PolymarketWebSocketClient:
 
                     self._has_initialized_subscription = True
                     logger.info(
-                        "已发送初始订阅: %s 个 Token (类型: %s)",
+                        "已发送初始订阅: {} 个 Token (类型: {})",
                         len(self._subscribed_assets),
                         subscribe_type,
                     )
@@ -202,25 +199,25 @@ class PolymarketWebSocketClient:
                     }
 
                     logger.info(
-                        "已订阅 %s 个 Token (类型: %s)",
+                        "已订阅 {} 个 Token (类型: {})",
                         len(asset_ids),
                         subscribe_type,
                     )
 
-                logger.debug("订阅消息: %s", json.dumps(subscribe_msg))
+                logger.debug("订阅消息: {}", json.dumps(subscribe_msg))
                 self.ws.send(json.dumps(subscribe_msg))
             else:
                 logger.info(
-                    "已添加 %s 个 Token 到订阅列表，连接时将自动订阅 (类型: %s)",
+                    "已添加 {} 个 Token 到订阅列表，连接时将自动订阅 (类型: {})",
                     len(asset_ids),
                     subscribe_type,
                 )
-            logger.debug("Token IDs: %s", asset_ids)
+            logger.debug("Token IDs: {}", asset_ids)
 
             return True
 
         except Exception as exc:
-            logger.error("订阅失败: %s", exc)
+            logger.error("订阅失败: {}", exc)
             if self.on_error_callback:
                 self.on_error_callback(exc)
             return False
@@ -254,11 +251,11 @@ class PolymarketWebSocketClient:
             else:
                 self._subscribed_assets = []
 
-            logger.info("已取消订阅: %s", asset_ids or "all")
+            logger.info("已取消订阅: {}", asset_ids or "all")
             return True
 
         except Exception as exc:
-            logger.error("取消订阅失败: %s", exc)
+            logger.error("取消订阅失败: {}", exc)
             return False
 
     async def close(self) -> None:
@@ -275,7 +272,7 @@ class PolymarketWebSocketClient:
             try:
                 self.ws.close()
             except Exception as exc:
-                logger.debug("关闭 WebSocket 时出错: %s", exc)
+                logger.debug("关闭 WebSocket 时出错: {}", exc)
 
         if self._ws_thread and self._ws_thread.is_alive():
             self._ws_thread.join(timeout=2)
@@ -288,7 +285,7 @@ class PolymarketWebSocketClient:
             try:
                 self.on_close_callback()
             except Exception as exc:
-                logger.error("关闭回调执行失败: %s", exc)
+                logger.error("关闭回调执行失败: {}", exc)
 
         logger.info("Polymarket WebSocket 已关闭")
 
@@ -313,7 +310,7 @@ class PolymarketWebSocketClient:
                 ws.send(json.dumps(subscribe_msg))
                 self._has_initialized_subscription = True
                 logger.info(
-                    "已发送初始订阅: %s 个 Token (类型: %s)",
+                    "已发送初始订阅: {} 个 Token (类型: {})",
                     len(self._subscribed_assets),
                     self._subscribe_type,
                 )
@@ -328,7 +325,7 @@ class PolymarketWebSocketClient:
                 self._heartbeat_thread.start()
 
         except Exception as exc:
-            logger.error("发送初始订阅失败: %s", exc)
+            logger.error("发送初始订阅失败: {}", exc)
             if self.on_error_callback:
                 self.on_error_callback(exc)
 
@@ -338,7 +335,7 @@ class PolymarketWebSocketClient:
                 message = message.decode("utf-8", errors="ignore")
 
             if not isinstance(message, str):
-                logger.debug("忽略非文本消息: %s", type(message))
+                logger.debug("忽略非文本消息: {}", type(message))
                 return
 
             cleaned = message.strip()
@@ -367,18 +364,18 @@ class PolymarketWebSocketClient:
                     else:
                         self.on_message_callback(data)
                 except Exception as exc:
-                    logger.error("消息回调处理失败: %s", exc)
+                    logger.error("消息回调处理失败: {}", exc)
 
         except Exception as exc:
-            logger.error("处理消息时出错: %s", exc)
+            logger.error("处理消息时出错: {}", exc)
 
     def _on_error(self, _ws: WebSocketApp, error: Exception) -> None:
-        logger.error("WebSocket 错误: %s", error)
+        logger.error("WebSocket 错误: {}", error)
         if self.on_error_callback:
             try:
                 self.on_error_callback(error)
             except Exception as exc:
-                logger.error("错误回调执行失败: %s", exc)
+                logger.error("错误回调执行失败: {}", exc)
 
     def _on_close(
         self,
@@ -390,7 +387,7 @@ class PolymarketWebSocketClient:
         self._has_initialized_subscription = False
         self._connection_ready.clear()
         logger.info(
-            "Polymarket WebSocket 连接关闭 (状态码: %s, 消息: %s)",
+            "Polymarket WebSocket 连接关闭 (状态码: {}, 消息: {})",
             close_status_code,
             close_msg,
         )
@@ -401,7 +398,7 @@ class PolymarketWebSocketClient:
             try:
                 self.on_close_callback()
             except Exception as exc:
-                logger.error("关闭回调执行失败: %s", exc)
+                logger.error("关闭回调执行失败: {}", exc)
 
     def _heartbeat_loop(self, ws: WebSocketApp) -> None:
         self._stop_heartbeat.wait(timeout=self.HEARTBEAT_INTERVAL)
@@ -411,7 +408,7 @@ class PolymarketWebSocketClient:
                 ws.send("PING")
                 logger.debug("心跳发送成功")
             except Exception as exc:
-                logger.error("心跳发送失败: %s", exc)
+                logger.error("心跳发送失败: {}", exc)
                 break
 
             self._stop_heartbeat.wait(timeout=self.HEARTBEAT_INTERVAL)

@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Optional
 
 import httpx
+from loguru import logger
 
 from .config import POLYMARKET_DATA_API_URL, POLYMARKET_PROXY_ADDRESS
-
-
-logger = logging.getLogger(__name__)
 
 
 def _resolve_user_address(
@@ -103,17 +100,17 @@ async def get_current_positions(
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
-            logger.debug("请求持仓: %s params=%s", url, params)
+            logger.debug("请求持仓: {} params={}", url, params)
             response = await client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
             if not isinstance(data, list):
-                logger.warning("持仓响应非列表: %s", type(data))
+                logger.warning("持仓响应非列表: {}", type(data))
                 return None
             return data
         except httpx.HTTPStatusError as exc:
             logger.error(
-                "HTTP 错误: %s - %s",
+                "HTTP 错误: {} - {}",
                 exc.response.status_code,
                 exc.response.text,
             )
@@ -121,9 +118,8 @@ async def get_current_positions(
         except httpx.RequestError as exc:
             url = str(getattr(exc.request, "url", ""))
             detail = f"{exc.__class__.__name__}: {exc!r}"
-            logger.error("请求失败: %s %s", url, detail)
-            print(f"Polymarket 请求失败: {url} {detail}")
+            logger.error("请求失败: {} {}", url, detail)
             return None
         except Exception as exc:
-            logger.error("获取持仓失败: %s", exc)
+            logger.error("获取持仓失败: {}", exc)
             return None

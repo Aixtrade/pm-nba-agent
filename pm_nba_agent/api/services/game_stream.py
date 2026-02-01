@@ -1,10 +1,11 @@
 """比赛数据流服务"""
 
 import asyncio
-import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, AsyncGenerator, Optional
+
+from loguru import logger
 
 from ..models.requests import LiveStreamRequest
 from ..models.events import (
@@ -35,9 +36,6 @@ from ...polymarket.models import (
 )
 from ...polymarket.strategies import StrategyRegistry, SignalType
 from ...models.game_data import GameData
-
-logger = logging.getLogger(__name__)
-
 
 @dataclass
 class StrategyState:
@@ -136,7 +134,7 @@ class StrategyState:
         if yes_price > 0:
             if self.yes_price and yes_price != self.yes_price:
                 logger.info(
-                    "Polymarket 订单簿价格更新: YES %s %s -> %s",
+                    "Polymarket 订单簿价格更新: YES {} {} -> {}",
                     self.yes_token_id,
                     self.yes_price,
                     yes_price,
@@ -146,7 +144,7 @@ class StrategyState:
         if no_price > 0:
             if self.no_price and no_price != self.no_price:
                 logger.info(
-                    "Polymarket 订单簿价格更新: NO %s %s -> %s",
+                    "Polymarket 订单簿价格更新: NO {} {} -> {}",
                     self.no_token_id,
                     self.no_price,
                     no_price,
@@ -276,16 +274,21 @@ class GameStreamService:
 
             try:
                 try:
-                    print(f"Polymarket 解析开始: {request.url}")
+                    logger.info("Polymarket 解析开始: {}", request.url)
                     polymarket_event = await MarketResolver.resolve_event(request.url)
                     if polymarket_event:
-                        print(
+                        logger.info(
                             "Polymarket 解析完成: "
-                            f"event_id={polymarket_event.event_id} "
-                            f"condition_id={polymarket_event.condition_id} "
-                            f"tokens={len(polymarket_event.tokens)} "
-                            f"has_market_info={polymarket_event.market_info is not None} "
-                            f"has_event_data={polymarket_event.event_data is not None}"
+                            "event_id={} "
+                            "condition_id={} "
+                            "tokens={} "
+                            "has_market_info={} "
+                            "has_event_data={}",
+                            polymarket_event.event_id,
+                            polymarket_event.condition_id,
+                            len(polymarket_event.tokens),
+                            polymarket_event.market_info is not None,
+                            polymarket_event.event_data is not None,
                         )
                         await _emit(
                             PolymarketInfoEvent.create(
@@ -299,18 +302,20 @@ class GameStreamService:
                             started = await polymarket_book_stream.start(asset_ids)
                             if started:
                                 polymarket_book_queue = polymarket_book_stream.queue
-                                print(
+                                logger.info(
                                     "Polymarket WebSocket 已订阅 book: "
-                                    f"tokens={len(asset_ids)}"
+                                    "tokens={}",
+                                    len(asset_ids),
                                 )
 
                                 # 初始化策略状态
                                 strategy_state = _init_strategy_state(polymarket_event)
                                 if strategy_state:
-                                    print(
-                                        f"策略已初始化: {strategy_state.strategy_id}, "
-                                        f"YES={strategy_state.yes_token_id[:8]}..., "
-                                        f"NO={strategy_state.no_token_id[:8]}..."
+                                    logger.info(
+                                        "策略已初始化: {}, YES={}..., NO={}...",
+                                        strategy_state.strategy_id,
+                                        strategy_state.yes_token_id[:8],
+                                        strategy_state.no_token_id[:8],
                                     )
                                 if book_task is None and polymarket_book_queue is not None:
                                     book_task = asyncio.create_task(
@@ -320,9 +325,9 @@ class GameStreamService:
                                         )
                                     )
                             else:
-                                print("Polymarket WebSocket 订阅失败")
+                                logger.warning("Polymarket WebSocket 订阅失败")
                     else:
-                        print("Polymarket 解析失败: 无返回结果")
+                        logger.warning("Polymarket 解析失败: 无返回结果")
                         await _emit(
                             ErrorEvent.create(
                                 code="POLYMARKET_INFO_MISSING",
@@ -331,7 +336,7 @@ class GameStreamService:
                             ).to_sse()
                         )
                 except Exception as exc:
-                    print(f"Polymarket 解析异常: {exc}")
+                    logger.error("Polymarket 解析异常: {}", exc)
                     await _emit(
                         ErrorEvent.create(
                             code="POLYMARKET_INFO_ERROR",

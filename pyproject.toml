@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi[standard]>=0.128.0",
+    "loguru>=0.7.3",
     "nba-api>=1.11.3",
     "openai>=2.15.0",
     "pandas>=3.0.0",

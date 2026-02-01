@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Optional
+
+from loguru import logger
 
 from .book_stream import PolymarketBookStream
 from .models import (
@@ -20,9 +21,6 @@ from .models import (
 from .orders import create_polymarket_order
 from .positions import get_current_positions
 from .strategies import StrategyRegistry, TradingSignal, SignalType
-
-
-logger = logging.getLogger(__name__)
 
 
 class ExecutionMode(Enum):
@@ -152,7 +150,7 @@ class StrategyExecutor:
         # 加载策略
         strategy = StrategyRegistry.get(self.config.strategy_id)
         if strategy is None:
-            logger.error("策略加载失败: %s", self.config.strategy_id)
+            logger.error("策略加载失败: {}", self.config.strategy_id)
             return False
 
         # 初始化持仓
@@ -168,7 +166,7 @@ class StrategyExecutor:
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
         logger.info(
-            "执行器已启动: strategy=%s, mode=%s",
+            "执行器已启动: strategy={}, mode={}",
             self.config.strategy_id,
             self.config.execution_mode.value,
         )
@@ -204,7 +202,7 @@ class StrategyExecutor:
                     self._position.no_size,
                 )
         except Exception as exc:
-            logger.warning("持仓同步失败: %s", exc)
+            logger.warning("持仓同步失败: {}", exc)
 
     async def _run_loop(self) -> None:
         """主循环：处理订单簿消息"""
@@ -220,7 +218,7 @@ class StrategyExecutor:
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                logger.error("消息处理失败: %s", exc)
+                logger.error("消息处理失败: {}", exc)
 
     async def _handle_message(self, message: Any) -> None:
         """处理订单簿消息"""
@@ -247,7 +245,7 @@ class StrategyExecutor:
             try:
                 self.on_snapshot(snapshot)
             except Exception as exc:
-                logger.warning("on_snapshot 回调失败: %s", exc)
+                logger.warning("on_snapshot 回调失败: {}", exc)
 
         # 执行策略
         result = await self._execute_strategy(snapshot)
@@ -257,7 +255,7 @@ class StrategyExecutor:
                 try:
                     self.on_signal(result.signal, result)
                 except Exception as exc:
-                    logger.warning("on_signal 回调失败: %s", exc)
+                    logger.warning("on_signal 回调失败: {}", exc)
 
             # 新事件推送
             if self.on_event:
@@ -265,7 +263,7 @@ class StrategyExecutor:
                     event = self._build_signal_event(result, snapshot)
                     self.on_event(event)
                 except Exception as exc:
-                    logger.warning("on_event 回调失败: %s", exc)
+                    logger.warning("on_event 回调失败: {}", exc)
 
     def _update_order_book(self, message: dict[str, Any]) -> None:
         """更新订单簿缓存"""
@@ -343,7 +341,7 @@ class StrategyExecutor:
                 params=self.config.strategy_params,
             )
         except Exception as exc:
-            logger.error("策略执行失败: %s", exc)
+            logger.error("策略执行失败: {}", exc)
             return ExecutionResult(success=False, signal=None, error=str(exc))
 
         if signal is None:
@@ -351,7 +349,7 @@ class StrategyExecutor:
 
         # HOLD 信号不执行
         if signal.signal_type == SignalType.HOLD:
-            logger.debug("HOLD: %s", signal.reason)
+            logger.debug("HOLD: {}", signal.reason)
             return ExecutionResult(success=True, signal=signal)
 
         # 验证信号
@@ -359,7 +357,7 @@ class StrategyExecutor:
             signal, order_book, self._position, self.config.strategy_params
         )
         if not valid:
-            logger.warning("信号验证失败: %s", reason)
+            logger.warning("信号验证失败: {}", reason)
             return ExecutionResult(success=False, signal=signal, error=reason)
 
         # 执行订单
@@ -390,7 +388,12 @@ class StrategyExecutor:
             }
 
             if self.config.execution_mode == ExecutionMode.SIMULATION:
-                logger.info("[模拟] YES %s: size=%.2f, price=%.4f", side, signal.yes_size, signal.yes_price)
+                logger.info(
+                    "[模拟] YES {}: size={:.2f}, price={:.4f}",
+                    side,
+                    signal.yes_size,
+                    signal.yes_price,
+                )
                 orders_placed.append({**order_info, "status": "SIMULATED"})
                 # 模拟模式也更新持仓
                 self._position.update_position(
@@ -409,9 +412,9 @@ class StrategyExecutor:
                     self._position.update_position(
                         "YES", signal.yes_size, signal.yes_price, is_buy=(side == "BUY")
                     )
-                    logger.info("YES %s 订单已提交: %s", side, result)
+                    logger.info("YES {} 订单已提交: {}", side, result)
                 except Exception as exc:
-                    logger.error("YES 订单失败: %s", exc)
+                    logger.error("YES 订单失败: {}", exc)
                     orders_placed.append({**order_info, "error": str(exc), "status": "FAILED"})
 
         # NO 方向订单
@@ -433,7 +436,12 @@ class StrategyExecutor:
             }
 
             if self.config.execution_mode == ExecutionMode.SIMULATION:
-                logger.info("[模拟] NO %s: size=%.2f, price=%.4f", side, signal.no_size, signal.no_price)
+                logger.info(
+                    "[模拟] NO {}: size={:.2f}, price={:.4f}",
+                    side,
+                    signal.no_size,
+                    signal.no_price,
+                )
                 orders_placed.append({**order_info, "status": "SIMULATED"})
                 self._position.update_position(
                     "NO", signal.no_size, signal.no_price, is_buy=(side == "BUY")
@@ -451,9 +459,9 @@ class StrategyExecutor:
                     self._position.update_position(
                         "NO", signal.no_size, signal.no_price, is_buy=(side == "BUY")
                     )
-                    logger.info("NO %s 订单已提交: %s", side, result)
+                    logger.info("NO {} 订单已提交: {}", side, result)
                 except Exception as exc:
-                    logger.error("NO 订单失败: %s", exc)
+                    logger.error("NO 订单失败: {}", exc)
                     orders_placed.append({**order_info, "error": str(exc), "status": "FAILED"})
 
         success = all(o.get("status") != "FAILED" for o in orders_placed)
@@ -495,7 +503,7 @@ class StrategyExecutor:
             try:
                 self.on_event(event)
             except Exception as exc:
-                logger.warning("emit_event 失败: %s", exc)
+                logger.warning("emit_event 失败: {}", exc)
 
     def emit_status(self, message: str, data: Optional[dict[str, Any]] = None) -> None:
         """发送状态事件"""

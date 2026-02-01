@@ -2,9 +2,11 @@
 
 from typing import Optional
 from datetime import datetime
+import time
+
+from loguru import logger
 from nba_api.stats.endpoints import scoreboardv2
 from nba_api.live.nba.endpoints import scoreboard
-import time
 
 
 def find_game_by_teams_and_date(
@@ -37,7 +39,7 @@ def find_game_by_teams_and_date(
             if game_id:
                 return game_id
         except Exception as e:
-            print(f"Live API 查询失败: {e}, 尝试使用 Stats API")
+            logger.warning("Live API 查询失败: {}, 尝试使用 Stats API", e)
 
     # 降级到 Stats API 查询特定日期
     return _find_game_stats(team1_abbr, team2_abbr, game_date)
@@ -93,14 +95,14 @@ def _find_game_stats(team1_abbr: str, team2_abbr: str, game_date: str) -> Option
         dt = datetime.strptime(game_date, '%Y-%m-%d')
         formatted_date = dt.strftime('%m/%d/%Y')
     except ValueError:
-        print(f"无效的日期格式: {game_date}")
+        logger.error("无效的日期格式: {}", game_date)
         return None
 
     try:
         board = scoreboardv2.ScoreboardV2(
             game_date=formatted_date,
             league_id='00',
-            day_offset=0
+            day_offset="0"
         )
 
         game_header = board.game_header.get_dict()
@@ -137,7 +139,7 @@ def _find_game_stats(team1_abbr: str, team2_abbr: str, game_date: str) -> Option
                     return game_id
 
     except Exception as e:
-        print(f"Stats API 查询失败: {e}")
+        logger.error("Stats API 查询失败: {}", e)
         return None
 
     return None
@@ -169,5 +171,5 @@ def get_todays_games() -> list[dict]:
 
         return result
     except Exception as e:
-        print(f"获取今日比赛失败: {e}")
+        logger.error("获取今日比赛失败: {}", e)
         return []

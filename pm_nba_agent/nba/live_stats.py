@@ -1,8 +1,10 @@
 """NBA 实时比赛数据获取"""
 
 from typing import Optional
-from nba_api.live.nba.endpoints import boxscore
 import time
+
+from loguru import logger
+from nba_api.live.nba.endpoints import boxscore
 
 from ..models.game_data import GameData, GameInfo, TeamStats, PlayerStats
 
@@ -77,7 +79,7 @@ def get_live_game_data(game_id: str) -> Optional[GameData]:
         )
 
     except Exception as e:
-        print(f"获取比赛数据失败: {e}")
+        logger.error("获取比赛数据失败: {}", e)
         return None
 
 
@@ -144,5 +146,5 @@ def get_game_summary(game_id: str) -> Optional[dict]:
             }
         }
     except Exception as e:
-        print(f"获取比赛摘要失败: {e}")
+        logger.error("获取比赛摘要失败: {}", e)
         return None

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import logging
+from loguru import logger
 import os
 from typing import Any, Optional
 
@@ -14,9 +14,6 @@ from .config import (
     POLYMARKET_WS_API_SECRET,
     POLYMARKET_WS_API_PASSPHRASE,
 )
-
-
-logger = logging.getLogger(__name__)
 
 
 class PolymarketBookStream:
@@ -91,7 +88,7 @@ class PolymarketBookStream:
                 missing_key_message="缺少 Polymarket 私钥，无法生成 WebSocket 订阅凭证",
             )
         except Exception as exc:
-            logger.warning("无法获取 Polymarket API 凭证，将尝试匿名订阅: %s", exc)
+            logger.warning("无法获取 Polymarket API 凭证，将尝试匿名订阅: {}", exc)
             return "", "", ""
 
         def _get_creds_value(creds: Any, *keys: str) -> str:
@@ -123,12 +120,12 @@ class PolymarketBookStream:
         if isinstance(message, dict):
             event_type = str(message.get("event_type", "")).lower()
             if event_type and event_type not in {"book", "price_change"}:
-                logger.debug("忽略非 book/price_change 消息: %s", event_type)
+                logger.debug("忽略非 book/price_change 消息: {}", event_type)
                 return
         await self._queue.put(message)
 
     def _handle_error(self, error: Exception) -> None:
-        logger.error("Polymarket WebSocket 错误: %s", error)
+        logger.error("Polymarket WebSocket 错误: {}", error)
 
     def _handle_close(self) -> None:
         logger.info("Polymarket WebSocket 连接已关闭")

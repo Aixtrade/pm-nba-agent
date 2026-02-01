@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 import json
-import logging
 import re
 from typing import Any, Optional
 
 import httpx
+from loguru import logger
 
 from .config import POLYMARKET_GAMMA_API_URL
 from .models import EventInfo, TokenInfo, MarketInfo
-
-
-logger = logging.getLogger(__name__)
 
 
 class MarketResolver:
@@ -47,16 +44,16 @@ class MarketResolver:
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 url = f"{POLYMARKET_GAMMA_API_URL}/markets/slug/{slug}"
-                logger.debug("请求市场详情: %s", url)
+                logger.debug("请求市场详情: {}", url)
                 response = await client.get(url)
                 if response.status_code == 404:
-                    logger.warning("市场不存在: %s", slug)
+                    logger.warning("市场不存在: {}", slug)
                     return None
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPStatusError as exc:
                 logger.error(
-                    "HTTP 错误: %s - %s",
+                    "HTTP 错误: {} - {}",
                     exc.response.status_code,
                     exc.response.text,
                 )
@@ -64,11 +61,10 @@ class MarketResolver:
             except httpx.RequestError as exc:
                 url = str(getattr(exc.request, "url", ""))
                 detail = f"{exc.__class__.__name__}: {exc!r}"
-                logger.error("请求失败: %s %s", url, detail)
-                print(f"Polymarket 请求失败: {url} {detail}")
+                logger.error("请求失败: {} {}", url, detail)
                 return None
             except Exception as exc:
-                logger.error("获取市场详情失败: %s", exc)
+                logger.error("获取市场详情失败: {}", exc)
                 return None
 
     @staticmethod
@@ -77,16 +73,16 @@ class MarketResolver:
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 url = f"{POLYMARKET_GAMMA_API_URL}/events/slug/{slug}"
-                logger.debug("请求事件详情: %s", url)
+                logger.debug("请求事件详情: {}", url)
                 response = await client.get(url)
                 if response.status_code == 404:
-                    logger.warning("事件不存在: %s", slug)
+                    logger.warning("事件不存在: {}", slug)
                     return None
                 response.raise_for_status()
                 return response.json()
             except httpx.HTTPStatusError as exc:
                 logger.error(
-                    "HTTP 错误: %s - %s",
+                    "HTTP 错误: {} - {}",
                     exc.response.status_code,
                     exc.response.text,
                 )
@@ -94,11 +90,10 @@ class MarketResolver:
             except httpx.RequestError as exc:
                 url = str(getattr(exc.request, "url", ""))
                 detail = f"{exc.__class__.__name__}: {exc!r}"
-                logger.error("请求失败: %s %s", url, detail)
-                print(f"Polymarket 请求失败: {url} {detail}")
+                logger.error("请求失败: {} {}", url, detail)
                 return None
             except Exception as exc:
-                logger.error("获取事件详情失败: %s", exc)
+                logger.error("获取事件详情失败: {}", exc)
                 return None
 
     @staticmethod
@@ -172,7 +167,7 @@ class MarketResolver:
             raw_data=market_data,
         )
         logger.info(
-            "解析市场 %s，condition_id=%s，Tokens: %s",
+            "解析市场 {}，condition_id={}，Tokens: {}",
             slug,
             condition_id,
             len(tokens),
@@ -220,7 +215,7 @@ class MarketResolver:
         """完整解析事件信息"""
         event_id = MarketResolver.parse_event_url(event_url_or_id)
         if not event_id:
-            logger.error("无法解析事件标识: %s", event_url_or_id)
+            logger.error("无法解析事件标识: {}", event_url_or_id)
             return None
 
         asset, interval = MarketResolver.extract_event_metadata(event_id)
@@ -236,7 +231,7 @@ class MarketResolver:
             event_id,
         )
         if not condition_id:
-            logger.warning("无法获取事件 condition_id: %s", event_id)
+            logger.warning("无法获取事件 condition_id: {}", event_id)
 
         return EventInfo(
             event_id=event_id,

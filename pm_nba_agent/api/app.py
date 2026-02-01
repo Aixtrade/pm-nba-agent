@@ -6,6 +6,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from loguru import logger
 
 from .routes.live_stream import router as live_stream_router
 from .routes.parse import router as parse_router
@@ -14,6 +15,9 @@ from .routes.orders import router as orders_router
 from .routes.positions import router as positions_router
 from .services.data_fetcher import DataFetcher
 from ..agent import GameAnalyzer, AnalysisConfig
+from ..logging_config import configure_logging
+
+configure_logging()
 
 
 @asynccontextmanager
@@ -24,22 +28,22 @@ async def lifespan(app: FastAPI):
 
     # 启动时初始化资源
     app.state.fetcher = DataFetcher(max_workers=3)
-    print("DataFetcher 已初始化")
+    logger.info("DataFetcher 已初始化")
 
     # 初始化分析器
     config = AnalysisConfig()
     app.state.analyzer = GameAnalyzer(config)
     if config.is_configured():
-        print(f"GameAnalyzer 已初始化 (模型: {config.model})")
+        logger.info("GameAnalyzer 已初始化 (模型: {})", config.model)
     else:
-        print("GameAnalyzer 未配置 API Key，AI 分析功能不可用")
+        logger.warning("GameAnalyzer 未配置 API Key，AI 分析功能不可用")
 
     yield
 
     # 关闭时清理资源
     await app.state.analyzer.close()
     app.state.fetcher.shutdown()
-    print("资源已关闭")
+    logger.info("资源已关闭")
 
 
 app = FastAPI(
