@@ -185,10 +185,8 @@ class PolymarketWebSocketClient:
             if self.is_connected and self.ws:
                 if not self._has_initialized_subscription:
                     subscribe_msg = {
-                        "type": self.MARKET_CHANNEL,
-                        "asset_ids": self._subscribed_assets,
+                        "type": self.MARKET_CHANNEL.upper(),
                         "assets_ids": self._subscribed_assets,
-                        "subscribe_type": subscribe_type,
                     }
 
                     self._has_initialized_subscription = True
@@ -200,9 +198,7 @@ class PolymarketWebSocketClient:
                 else:
                     subscribe_msg = {
                         "operation": "subscribe",
-                        "asset_ids": asset_ids,
                         "assets_ids": asset_ids,
-                        "subscribe_type": subscribe_type,
                     }
 
                     logger.info(
@@ -310,10 +306,8 @@ class PolymarketWebSocketClient:
 
             if self._subscribed_assets:
                 subscribe_msg = {
-                    "type": self.MARKET_CHANNEL,
-                    "asset_ids": self._subscribed_assets,
+                    "type": self.MARKET_CHANNEL.upper(),
                     "assets_ids": self._subscribed_assets,
-                    "subscribe_type": self._subscribe_type,
                 }
 
                 ws.send(json.dumps(subscribe_msg))

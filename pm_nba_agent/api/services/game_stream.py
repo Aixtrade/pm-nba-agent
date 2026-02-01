@@ -1,6 +1,7 @@
 """比赛数据流服务"""
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, AsyncGenerator, Optional
@@ -36,6 +37,8 @@ from ...polymarket.models import (
 from ...polymarket.strategies import StrategyRegistry, SignalType
 from ...models.game_data import GameData
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class StrategyState:
@@ -66,6 +69,44 @@ class StrategyState:
 
     def update_book(self, message: dict[str, Any]) -> None:
         """更新订单簿缓存"""
+        event_type = str(message.get("event_type", "")).lower()
+
+        if event_type == "price_change":
+            price_changes = message.get("price_changes") or []
+            if not isinstance(price_changes, list):
+                return
+
+            for change in price_changes:
+                if not isinstance(change, dict):
+                    continue
+                change_asset_id = change.get("asset_id")
+                if not change_asset_id:
+                    continue
+
+                side = str(change.get("side", "")).upper()
+                price = float(change.get("price", 0) or 0)
+                size = float(change.get("size", 0) or 0)
+                if price <= 0:
+                    continue
+
+                if change_asset_id == self.yes_token_id:
+                    if side == "BUY":
+                        self.yes_bids = self._apply_price_change(self.yes_bids, price, size)
+                        self.yes_bids.sort(key=lambda level: level.price, reverse=True)
+                    elif side == "SELL":
+                        self.yes_asks = self._apply_price_change(self.yes_asks, price, size)
+                        self.yes_asks.sort(key=lambda level: level.price)
+                elif change_asset_id == self.no_token_id:
+                    if side == "BUY":
+                        self.no_bids = self._apply_price_change(self.no_bids, price, size)
+                        self.no_bids.sort(key=lambda level: level.price, reverse=True)
+                    elif side == "SELL":
+                        self.no_asks = self._apply_price_change(self.no_asks, price, size)
+                        self.no_asks.sort(key=lambda level: level.price)
+
+            self._refresh_prices()
+            return
+
         asset_id = message.get("asset_id")
         if not asset_id:
             return
@@ -76,22 +117,63 @@ class StrategyState:
         bid_levels = [OrderLevel.from_raw(b) for b in bids if isinstance(b, dict)]
         ask_levels = [OrderLevel.from_raw(a) for a in asks if isinstance(a, dict)]
 
-        price = float(message.get("price", 0) or message.get("last_price", 0) or 0)
-
         if asset_id == self.yes_token_id:
             if bid_levels:
                 self.yes_bids = bid_levels
             if ask_levels:
                 self.yes_asks = ask_levels
-            if price > 0:
-                self.yes_price = price
         elif asset_id == self.no_token_id:
             if bid_levels:
                 self.no_bids = bid_levels
             if ask_levels:
                 self.no_asks = ask_levels
-            if price > 0:
-                self.no_price = price
+
+        self._refresh_prices()
+
+    def _refresh_prices(self) -> None:
+        yes_price = self._mid_price(self.yes_bids, self.yes_asks)
+        no_price = self._mid_price(self.no_bids, self.no_asks)
+
+        if yes_price > 0:
+            if self.yes_price and yes_price != self.yes_price:
+                logger.info(
+                    "Polymarket 订单簿价格更新: YES %s %s -> %s",
+                    self.yes_token_id,
+                    self.yes_price,
+                    yes_price,
+                )
+            self.yes_price = yes_price
+
+        if no_price > 0:
+            if self.no_price and no_price != self.no_price:
+                logger.info(
+                    "Polymarket 订单簿价格更新: NO %s %s -> %s",
+                    self.no_token_id,
+                    self.no_price,
+                    no_price,
+                )
+            self.no_price = no_price
+
+    @staticmethod
+    def _mid_price(bids: list[OrderLevel], asks: list[OrderLevel]) -> float:
+        best_bid = max((level.price for level in bids), default=0.0)
+        best_ask = min((level.price for level in asks), default=0.0)
+        if best_bid and best_ask:
+            return (best_bid + best_ask) / 2
+        return best_bid or best_ask
+
+    @staticmethod
+    def _apply_price_change(
+        levels: list[OrderLevel],
+        price: float,
+        size: float,
+    ) -> list[OrderLevel]:
+        level_map = {level.price: level.size for level in levels}
+        if size <= 0:
+            level_map.pop(price, None)
+        else:
+            level_map[price] = size
+        return [OrderLevel(price=p, size=s) for p, s in level_map.items()]
 
     def build_snapshot(self) -> Optional[MarketSnapshot]:
         """构建市场快照"""
@@ -172,188 +254,234 @@ class GameStreamService:
         polymarket_book_stream: Optional[PolymarketBookStream] = None
         polymarket_book_queue: Optional[asyncio.Queue[dict[str, Any]]] = None
         strategy_state: Optional[StrategyState] = None
+        event_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        book_task: Optional[asyncio.Task[None]] = None
 
-        try:
+        async def _emit(event: str) -> None:
+            await event_queue.put(event)
+
+        async def _consume_polymarket_book_queue(
+            queue: asyncio.Queue[dict[str, Any]],
+            strategy: Optional[StrategyState],
+        ) -> None:
             try:
-                print(f"Polymarket 解析开始: {request.url}")
-                polymarket_event = await MarketResolver.resolve_event(request.url)
-                if polymarket_event:
-                    print(
-                        "Polymarket 解析完成: "
-                        f"event_id={polymarket_event.event_id} "
-                        f"condition_id={polymarket_event.condition_id} "
-                        f"tokens={len(polymarket_event.tokens)} "
-                        f"has_market_info={polymarket_event.market_info is not None} "
-                        f"has_event_data={polymarket_event.event_data is not None}"
-                    )
-                    yield PolymarketInfoEvent.create(
-                        polymarket_event.to_dict()
-                    ).to_sse()
-
-                    asset_ids = _collect_polymarket_asset_ids(polymarket_event)
-                    if asset_ids:
-                        polymarket_book_stream = PolymarketBookStream()
-                        started = await polymarket_book_stream.start(asset_ids)
-                        if started:
-                            polymarket_book_queue = polymarket_book_stream.queue
-                            print(
-                                "Polymarket WebSocket 已订阅 book: "
-                                f"tokens={len(asset_ids)}"
-                            )
-
-                            # 初始化策略状态
-                            strategy_state = _init_strategy_state(polymarket_event)
-                            if strategy_state:
-                                print(
-                                    f"策略已初始化: {strategy_state.strategy_id}, "
-                                    f"YES={strategy_state.yes_token_id[:8]}..., "
-                                    f"NO={strategy_state.no_token_id[:8]}..."
-                                )
-                        else:
-                            print("Polymarket WebSocket 订阅失败")
-                else:
-                    print("Polymarket 解析失败: 无返回结果")
-                    yield ErrorEvent.create(
-                        code="POLYMARKET_INFO_MISSING",
-                        message="未获取到 Polymarket 市场信息",
-                        recoverable=True,
-                    ).to_sse()
-            except Exception as exc:
-                print(f"Polymarket 解析异常: {exc}")
-                yield ErrorEvent.create(
-                    code="POLYMARKET_INFO_ERROR",
-                    message=str(exc),
-                    recoverable=True,
-                ).to_sse()
-
-            # 2. 查找比赛（未开赛时保持连接并提示）
-            pending_notice_sent = False
-            game_id: Optional[str] = None
-            while game_id is None:
-                game_result = await self._fetcher.find_game(
-                    event_info.team1_abbr,
-                    event_info.team2_abbr,
-                    event_info.game_date
-                )
-                if game_result.success:
-                    game_id = game_result.data
-                    break
-
-                if _is_future_or_today(event_info.game_date):
-                    if request.include_scoreboard and not pending_notice_sent:
-                        placeholder = _build_placeholder_scoreboard(event_info)
-                        status_message = _build_status_message(placeholder.get("status", ""))
-                        yield ScoreboardEvent.create(
-                            game_id=placeholder["game_id"],
-                            status=placeholder["status"],
-                            period=placeholder["period"],
-                            game_clock=placeholder["game_clock"],
-                            home_team=placeholder["home_team"],
-                            away_team=placeholder["away_team"],
-                            status_message=status_message,
-                        ).to_sse()
-                        pending_notice_sent = True
-
-                    if polymarket_book_queue:
-                        async for book_event in _drain_polymarket_book_queue(
-                            polymarket_book_queue,
-                            strategy_state,
-                        ):
-                            yield book_event
-
-                    yield HeartbeatEvent.create().to_sse()
-                    await asyncio.sleep(request.poll_interval)
-                    continue
-
-                yield ErrorEvent.create(
-                    code="GAME_NOT_FOUND",
-                    message=game_result.error or "比赛未找到",
-                    recoverable=False
-                ).to_sse()
-                return
-            if game_id is None:
+                while True:
+                    message = await queue.get()
+                    for event in _build_polymarket_events(message, strategy):
+                        await event_queue.put(event)
+            except asyncio.CancelledError:
                 return
 
-            state = StreamState(game_id=game_id)
+        async def _main_loop() -> None:
+            nonlocal polymarket_book_stream, polymarket_book_queue, strategy_state, book_task
 
-            # 创建比赛上下文
-            context = GameContext(game_id=game_id)
-
-            # 3. 进入轮询循环
-            while not state.is_game_ended:
+            try:
                 try:
-                    # 获取并推送各类数据
-                    async for event in self._fetch_and_emit(
-                        request,
-                        state,
-                        context,
-                        polymarket_book_queue,
-                        strategy_state,
-                    ):
-                        yield event
+                    print(f"Polymarket 解析开始: {request.url}")
+                    polymarket_event = await MarketResolver.resolve_event(request.url)
+                    if polymarket_event:
+                        print(
+                            "Polymarket 解析完成: "
+                            f"event_id={polymarket_event.event_id} "
+                            f"condition_id={polymarket_event.condition_id} "
+                            f"tokens={len(polymarket_event.tokens)} "
+                            f"has_market_info={polymarket_event.market_info is not None} "
+                            f"has_event_data={polymarket_event.event_data is not None}"
+                        )
+                        await _emit(
+                            PolymarketInfoEvent.create(
+                                polymarket_event.to_dict()
+                            ).to_sse()
+                        )
 
-                    if state.is_game_ended:
+                        asset_ids = _collect_polymarket_asset_ids(polymarket_event)
+                        if asset_ids:
+                            polymarket_book_stream = PolymarketBookStream()
+                            started = await polymarket_book_stream.start(asset_ids)
+                            if started:
+                                polymarket_book_queue = polymarket_book_stream.queue
+                                print(
+                                    "Polymarket WebSocket 已订阅 book: "
+                                    f"tokens={len(asset_ids)}"
+                                )
+
+                                # 初始化策略状态
+                                strategy_state = _init_strategy_state(polymarket_event)
+                                if strategy_state:
+                                    print(
+                                        f"策略已初始化: {strategy_state.strategy_id}, "
+                                        f"YES={strategy_state.yes_token_id[:8]}..., "
+                                        f"NO={strategy_state.no_token_id[:8]}..."
+                                    )
+                                if book_task is None and polymarket_book_queue is not None:
+                                    book_task = asyncio.create_task(
+                                        _consume_polymarket_book_queue(
+                                            polymarket_book_queue,
+                                            strategy_state,
+                                        )
+                                    )
+                            else:
+                                print("Polymarket WebSocket 订阅失败")
+                    else:
+                        print("Polymarket 解析失败: 无返回结果")
+                        await _emit(
+                            ErrorEvent.create(
+                                code="POLYMARKET_INFO_MISSING",
+                                message="未获取到 Polymarket 市场信息",
+                                recoverable=True,
+                            ).to_sse()
+                        )
+                except Exception as exc:
+                    print(f"Polymarket 解析异常: {exc}")
+                    await _emit(
+                        ErrorEvent.create(
+                            code="POLYMARKET_INFO_ERROR",
+                            message=str(exc),
+                            recoverable=True,
+                        ).to_sse()
+                    )
+
+                # 2. 查找比赛（未开赛时保持连接并提示）
+                pending_notice_sent = False
+                game_id: Optional[str] = None
+                while game_id is None:
+                    game_result = await self._fetcher.find_game(
+                        event_info.team1_abbr,
+                        event_info.team2_abbr,
+                        event_info.game_date
+                    )
+                    if game_result.success:
+                        game_id = game_result.data
                         break
 
-                    # 触发 AI 分析
-                    if request.enable_analysis and self._analyzer is not None:
-                        # 使用请求参数中的分析间隔
-                        should_run = self._analyzer.is_enabled() and context.should_analyze(
-                            normal_interval=request.analysis_interval,
-                            event_interval=min(request.analysis_interval / 2, 15.0),
-                        )
-                        if should_run:
-                            round_number = context.analysis_round + 1
-                            async for chunk in self._analyzer.analyze_stream(context):
-                                yield AnalysisChunkEvent.create(
-                                    game_id=game_id,
-                                    chunk=chunk,
-                                    is_final=False,
-                                    round_number=round_number,
+                    if _is_future_or_today(event_info.game_date):
+                        if request.include_scoreboard and not pending_notice_sent:
+                            placeholder = _build_placeholder_scoreboard(event_info)
+                            status_message = _build_status_message(placeholder.get("status", ""))
+                            await _emit(
+                                ScoreboardEvent.create(
+                                    game_id=placeholder["game_id"],
+                                    status=placeholder["status"],
+                                    period=placeholder["period"],
+                                    game_clock=placeholder["game_clock"],
+                                    home_team=placeholder["home_team"],
+                                    away_team=placeholder["away_team"],
+                                    status_message=status_message,
                                 ).to_sse()
-                            # 发送分析结束标记
-                            yield AnalysisChunkEvent.create(
-                                game_id=game_id,
-                                chunk="",
-                                is_final=True,
-                                round_number=round_number,
-                            ).to_sse()
+                            )
+                            pending_notice_sent = True
 
-                    # 发送心跳
-                    if polymarket_book_queue:
-                        async for book_event in _drain_polymarket_book_queue(
-                            polymarket_book_queue,
-                            strategy_state,
+                        await _emit(HeartbeatEvent.create().to_sse())
+                        await asyncio.sleep(request.poll_interval)
+                        continue
+
+                    await _emit(
+                        ErrorEvent.create(
+                            code="GAME_NOT_FOUND",
+                            message=game_result.error or "比赛未找到",
+                            recoverable=False
+                        ).to_sse()
+                    )
+                    return
+                if game_id is None:
+                    return
+
+                state = StreamState(game_id=game_id)
+
+                # 创建比赛上下文
+                context = GameContext(game_id=game_id)
+
+                # 3. 进入轮询循环
+                while not state.is_game_ended:
+                    try:
+                        # 获取并推送各类数据
+                        async for event in self._fetch_and_emit(
+                            request,
+                            state,
+                            context,
                         ):
-                            yield book_event
+                            await _emit(event)
 
-                    yield HeartbeatEvent.create().to_sse()
+                        if state.is_game_ended:
+                            break
 
-                    # 等待下一次轮询
-                    await asyncio.sleep(request.poll_interval)
+                        # 触发 AI 分析
+                        if request.enable_analysis and self._analyzer is not None:
+                            # 使用请求参数中的分析间隔
+                            should_run = self._analyzer.is_enabled() and context.should_analyze(
+                                normal_interval=request.analysis_interval,
+                                event_interval=min(request.analysis_interval / 2, 15.0),
+                            )
+                            if should_run:
+                                round_number = context.analysis_round + 1
+                                async for chunk in self._analyzer.analyze_stream(context):
+                                    await _emit(
+                                        AnalysisChunkEvent.create(
+                                            game_id=game_id,
+                                            chunk=chunk,
+                                            is_final=False,
+                                            round_number=round_number,
+                                        ).to_sse()
+                                    )
+                                # 发送分析结束标记
+                                await _emit(
+                                    AnalysisChunkEvent.create(
+                                        game_id=game_id,
+                                        chunk="",
+                                        is_final=True,
+                                        round_number=round_number,
+                                    ).to_sse()
+                                )
 
-                except asyncio.CancelledError:
-                    # 客户端断开连接
+                        # 发送心跳
+                        await _emit(HeartbeatEvent.create().to_sse())
+
+                        # 等待下一次轮询
+                        await asyncio.sleep(request.poll_interval)
+
+                    except asyncio.CancelledError:
+                        # 客户端断开连接
+                        break
+                    except Exception as e:
+                        # 发送可恢复错误，继续轮询
+                        await _emit(
+                            ErrorEvent.create(
+                                code="FETCH_ERROR",
+                                message=str(e),
+                                recoverable=True
+                            ).to_sse()
+                        )
+                        await asyncio.sleep(request.poll_interval)
+            finally:
+                if book_task:
+                    book_task.cancel()
+                    try:
+                        await book_task
+                    except asyncio.CancelledError:
+                        pass
+                if polymarket_book_stream:
+                    await polymarket_book_stream.close()
+                await event_queue.put(None)
+
+        main_task = asyncio.create_task(_main_loop())
+        try:
+            while True:
+                event = await event_queue.get()
+                if event is None:
                     break
-                except Exception as e:
-                    # 发送可恢复错误，继续轮询
-                    yield ErrorEvent.create(
-                        code="FETCH_ERROR",
-                        message=str(e),
-                        recoverable=True
-                    ).to_sse()
-                    await asyncio.sleep(request.poll_interval)
+                yield event
         finally:
-            if polymarket_book_stream:
-                await polymarket_book_stream.close()
+            main_task.cancel()
+            try:
+                await main_task
+            except asyncio.CancelledError:
+                pass
 
     async def _fetch_and_emit(
         self,
         request: LiveStreamRequest,
         state: StreamState,
         context: GameContext,
-        polymarket_book_queue: Optional[asyncio.Queue[dict[str, Any]]] = None,
-        strategy_state: Optional[StrategyState] = None,
     ) -> AsyncGenerator[str, None]:
         """获取数据并生成事件"""
 
@@ -494,12 +622,7 @@ class GameStreamService:
                     recoverable=True
                 ).to_sse()
 
-        if polymarket_book_queue:
-            async for book_event in _drain_polymarket_book_queue(
-                polymarket_book_queue,
-                strategy_state,
-            ):
-                yield book_event
+        return
 
 
 def _build_status_message(status: str) -> Optional[str]:
@@ -602,32 +725,104 @@ async def _drain_polymarket_book_queue(
         except asyncio.QueueEmpty:
             break
 
-        payload: dict[str, Any]
-        if isinstance(message, dict):
-            payload = message
-        else:
-            payload = {"raw": message}
+        for event in _build_polymarket_events(message, strategy_state):
+            yield event
 
-        # 推送订单簿事件
-        yield PolymarketBookEvent.create(payload).to_sse()
 
-        # 执行策略
-        if strategy_state and isinstance(message, dict):
-            signal_event = _execute_strategy(message, strategy_state)
-            if signal_event:
-                yield signal_event
+def _build_polymarket_events(
+    message: Any,
+    strategy_state: Optional[StrategyState] = None,
+) -> list[str]:
+    payload: dict[str, Any]
+    if isinstance(message, dict):
+        payload = message
+    else:
+        payload = {"raw": message}
+
+    event_type = ""
+    if isinstance(payload, dict):
+        if "bids" not in payload and "buys" in payload:
+            payload = {**payload, "bids": payload.get("buys")}
+        if "asks" not in payload and "sells" in payload:
+            payload = {**payload, "asks": payload.get("sells")}
+        event_type = str(payload.get("event_type", "")).lower()
+
+    snapshot: Optional[MarketSnapshot] = None
+    if strategy_state and isinstance(payload, dict):
+        strategy_state.update_book(payload)
+        snapshot = strategy_state.build_snapshot()
+
+        if event_type == "price_change":
+            events: list[str] = []
+            price_changes = payload.get("price_changes") or []
+            if not isinstance(price_changes, list):
+                price_changes = []
+
+            for change in price_changes:
+                if not isinstance(change, dict):
+                    continue
+                change_asset_id = change.get("asset_id")
+                if not change_asset_id:
+                    continue
+
+                if change_asset_id == strategy_state.yes_token_id:
+                    bids = [
+                        {"price": str(level.price), "size": str(level.size)}
+                        for level in strategy_state.yes_bids
+                    ]
+                    asks = [
+                        {"price": str(level.price), "size": str(level.size)}
+                        for level in strategy_state.yes_asks
+                    ]
+                elif change_asset_id == strategy_state.no_token_id:
+                    bids = [
+                        {"price": str(level.price), "size": str(level.size)}
+                        for level in strategy_state.no_bids
+                    ]
+                    asks = [
+                        {"price": str(level.price), "size": str(level.size)}
+                        for level in strategy_state.no_asks
+                    ]
+                else:
+                    bids = []
+                    asks = []
+
+                price_payload = {
+                    "event_type": "price_change",
+                    "asset_id": change_asset_id,
+                    "bids": bids,
+                    "asks": asks,
+                    "price_change": change,
+                    "timestamp": payload.get("timestamp"),
+                    "market": payload.get("market"),
+                }
+                events.append(PolymarketBookEvent.create(price_payload).to_sse())
+
+            if events:
+                return events
+
+    events = [PolymarketBookEvent.create(payload).to_sse()]
+
+    if strategy_state and isinstance(message, dict):
+        signal_event = _execute_strategy(message, strategy_state, snapshot=snapshot)
+        if signal_event:
+            events.append(signal_event)
+
+    return events
 
 
 def _execute_strategy(
     message: dict[str, Any],
     strategy_state: StrategyState,
+    snapshot: Optional[MarketSnapshot] = None,
 ) -> Optional[str]:
     """执行策略并返回信号事件"""
-    # 更新订单簿
-    strategy_state.update_book(message)
+    if snapshot is None:
+        # 更新订单簿
+        strategy_state.update_book(message)
 
-    # 构建快照
-    snapshot = strategy_state.build_snapshot()
+        # 构建快照
+        snapshot = strategy_state.build_snapshot()
     if snapshot is None:
         return None
 

@@ -120,6 +120,11 @@ class PolymarketBookStream:
         return api_key, api_secret, api_passphrase
 
     async def _handle_message(self, message: Any) -> None:
+        if isinstance(message, dict):
+            event_type = str(message.get("event_type", "")).lower()
+            if event_type and event_type not in {"book", "price_change"}:
+                logger.debug("忽略非 book/price_change 消息: %s", event_type)
+                return
         await self._queue.put(message)
 
     def _handle_error(self, error: Exception) -> None:
