@@ -8,6 +8,7 @@ import type {
   AnalysisChunkEventData,
   PolymarketInfoEventData,
   PolymarketBookEventData,
+  StrategySignalEventData,
 } from '@/types/sse'
 import type { PlayAction } from '@/types'
 
@@ -113,6 +114,8 @@ export const useGameStore = defineStore('game', () => {
   const polymarketInfo = ref<PolymarketInfoEventData | null>(null)
   const polymarketBook = ref<Record<string, BookPriceSnapshot>>({})
   const polymarketBookUpdatedAt = ref<string | null>(null)
+  const strategySignals = ref<StrategySignalEventData[]>([])
+  const MAX_STRATEGY_SIGNALS = 20
 
   // 计算属性
   const gameId = computed(() => scoreboard.value?.game_id ?? boxscore.value?.game_info.game_id ?? null)
@@ -270,6 +273,14 @@ export const useGameStore = defineStore('game', () => {
     analysisChunks.value = []
   }
 
+  function addStrategySignal(data: StrategySignalEventData) {
+    strategySignals.value = [data, ...strategySignals.value.slice(0, MAX_STRATEGY_SIGNALS - 1)]
+  }
+
+  function clearStrategySignals() {
+    strategySignals.value = []
+  }
+
   function reset() {
     scoreboard.value = null
     boxscore.value = null
@@ -279,6 +290,7 @@ export const useGameStore = defineStore('game', () => {
     polymarketInfo.value = null
     polymarketBook.value = {}
     polymarketBookUpdatedAt.value = null
+    strategySignals.value = []
   }
 
   return {
@@ -291,6 +303,7 @@ export const useGameStore = defineStore('game', () => {
     polymarketInfo,
     polymarketBook,
     polymarketBookUpdatedAt,
+    strategySignals,
     // 计算属性
     gameId,
     gameStatus,
@@ -307,6 +320,8 @@ export const useGameStore = defineStore('game', () => {
     appendAnalysisChunk,
     setPolymarketInfo,
     updatePolymarketBook,
+    addStrategySignal,
+    clearStrategySignals,
     clearAnalysis,
     reset,
   }

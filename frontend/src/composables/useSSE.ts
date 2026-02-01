@@ -55,6 +55,9 @@ export function useSSE() {
     onPolymarketBook: (data) => {
       gameStore.updatePolymarketBook(data)
     },
+    onStrategySignal: (data) => {
+      gameStore.addStrategySignal(data)
+    },
     onError: (data) => {
       console.warn('SSE Error:', data)
       if (data?.code === 'MAX_RETRIES_EXCEEDED') {

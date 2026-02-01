@@ -17,6 +17,7 @@ from ..models.events import (
     ErrorEvent,
     GameEndEvent,
     AnalysisChunkEvent,
+    StrategySignalEvent,
 )
 from .data_fetcher import DataFetcher
 from ...agent import GameAnalyzer, GameContext
@@ -24,8 +25,93 @@ from ...nba.team_resolver import get_team_info
 from ...parsers.polymarket_parser import PolymarketEventInfo
 from ...polymarket.resolver import MarketResolver
 from ...polymarket.book_stream import PolymarketBookStream
-from ...polymarket.models import EventInfo
+from ...polymarket.models import (
+    EventInfo,
+    MarketSnapshot,
+    SideData,
+    OrderLevel,
+    OrderBookContext,
+    PositionContext,
+)
+from ...polymarket.strategies import StrategyRegistry, SignalType
 from ...models.game_data import GameData
+
+
+@dataclass
+class StrategyState:
+    """策略执行状态"""
+    strategy_id: str = "merge_long"
+    yes_token_id: str = ""
+    no_token_id: str = ""
+    position: PositionContext = None  # type: ignore
+    # 订单簿缓存
+    yes_bids: list[OrderLevel] = None  # type: ignore
+    yes_asks: list[OrderLevel] = None  # type: ignore
+    no_bids: list[OrderLevel] = None  # type: ignore
+    no_asks: list[OrderLevel] = None  # type: ignore
+    yes_price: float = 0.0
+    no_price: float = 0.0
+
+    def __post_init__(self):
+        if self.position is None:
+            self.position = PositionContext()
+        if self.yes_bids is None:
+            self.yes_bids = []
+        if self.yes_asks is None:
+            self.yes_asks = []
+        if self.no_bids is None:
+            self.no_bids = []
+        if self.no_asks is None:
+            self.no_asks = []
+
+    def update_book(self, message: dict[str, Any]) -> None:
+        """更新订单簿缓存"""
+        asset_id = message.get("asset_id")
+        if not asset_id:
+            return
+
+        bids = message.get("bids") or message.get("buys") or []
+        asks = message.get("asks") or message.get("sells") or []
+
+        bid_levels = [OrderLevel.from_raw(b) for b in bids if isinstance(b, dict)]
+        ask_levels = [OrderLevel.from_raw(a) for a in asks if isinstance(a, dict)]
+
+        price = float(message.get("price", 0) or message.get("last_price", 0) or 0)
+
+        if asset_id == self.yes_token_id:
+            if bid_levels:
+                self.yes_bids = bid_levels
+            if ask_levels:
+                self.yes_asks = ask_levels
+            if price > 0:
+                self.yes_price = price
+        elif asset_id == self.no_token_id:
+            if bid_levels:
+                self.no_bids = bid_levels
+            if ask_levels:
+                self.no_asks = ask_levels
+            if price > 0:
+                self.no_price = price
+
+    def build_snapshot(self) -> Optional[MarketSnapshot]:
+        """构建市场快照"""
+        if not self.yes_price and not self.no_price:
+            return None
+
+        yes_data = SideData(
+            token_id=self.yes_token_id,
+            price=self.yes_price,
+            bids=self.yes_bids.copy(),
+            asks=self.yes_asks.copy(),
+        )
+        no_data = SideData(
+            token_id=self.no_token_id,
+            price=self.no_price,
+            bids=self.no_bids.copy(),
+            asks=self.no_asks.copy(),
+        )
+
+        return MarketSnapshot(yes_data=yes_data, no_data=no_data)
 
 
 @dataclass
@@ -34,6 +120,7 @@ class StreamState:
     game_id: str
     last_action_number: int = 0
     is_game_ended: bool = False
+    strategy: Optional[StrategyState] = None
 
 
 class GameStreamService:
@@ -84,6 +171,7 @@ class GameStreamService:
 
         polymarket_book_stream: Optional[PolymarketBookStream] = None
         polymarket_book_queue: Optional[asyncio.Queue[dict[str, Any]]] = None
+        strategy_state: Optional[StrategyState] = None
 
         try:
             try:
@@ -112,6 +200,15 @@ class GameStreamService:
                                 "Polymarket WebSocket 已订阅 book: "
                                 f"tokens={len(asset_ids)}"
                             )
+
+                            # 初始化策略状态
+                            strategy_state = _init_strategy_state(polymarket_event)
+                            if strategy_state:
+                                print(
+                                    f"策略已初始化: {strategy_state.strategy_id}, "
+                                    f"YES={strategy_state.yes_token_id[:8]}..., "
+                                    f"NO={strategy_state.no_token_id[:8]}..."
+                                )
                         else:
                             print("Polymarket WebSocket 订阅失败")
                 else:
@@ -159,7 +256,8 @@ class GameStreamService:
 
                     if polymarket_book_queue:
                         async for book_event in _drain_polymarket_book_queue(
-                            polymarket_book_queue
+                            polymarket_book_queue,
+                            strategy_state,
                         ):
                             yield book_event
 
@@ -190,6 +288,7 @@ class GameStreamService:
                         state,
                         context,
                         polymarket_book_queue,
+                        strategy_state,
                     ):
                         yield event
 
@@ -223,7 +322,8 @@ class GameStreamService:
                     # 发送心跳
                     if polymarket_book_queue:
                         async for book_event in _drain_polymarket_book_queue(
-                            polymarket_book_queue
+                            polymarket_book_queue,
+                            strategy_state,
                         ):
                             yield book_event
 
@@ -253,6 +353,7 @@ class GameStreamService:
         state: StreamState,
         context: GameContext,
         polymarket_book_queue: Optional[asyncio.Queue[dict[str, Any]]] = None,
+        strategy_state: Optional[StrategyState] = None,
     ) -> AsyncGenerator[str, None]:
         """获取数据并生成事件"""
 
@@ -395,7 +496,8 @@ class GameStreamService:
 
         if polymarket_book_queue:
             async for book_event in _drain_polymarket_book_queue(
-                polymarket_book_queue
+                polymarket_book_queue,
+                strategy_state,
             ):
                 yield book_event
 
@@ -457,9 +559,43 @@ def _collect_polymarket_asset_ids(event_info: EventInfo) -> list[str]:
     return []
 
 
+def _init_strategy_state(event_info: EventInfo) -> Optional[StrategyState]:
+    """从事件信息初始化策略状态"""
+    tokens = event_info.tokens
+    if len(tokens) < 2:
+        return None
+
+    # 根据 outcome 识别 YES/NO token
+    yes_token_id = ""
+    no_token_id = ""
+
+    for token in tokens:
+        outcome = token.outcome.upper() if token.outcome else ""
+        if outcome in ("YES", "UP"):
+            yes_token_id = token.token_id
+        elif outcome in ("NO", "DOWN"):
+            no_token_id = token.token_id
+
+    # 如果无法识别，按顺序使用前两个
+    if not yes_token_id and len(tokens) >= 1:
+        yes_token_id = tokens[0].token_id
+    if not no_token_id and len(tokens) >= 2:
+        no_token_id = tokens[1].token_id
+
+    if not yes_token_id or not no_token_id:
+        return None
+
+    return StrategyState(
+        yes_token_id=yes_token_id,
+        no_token_id=no_token_id,
+    )
+
+
 async def _drain_polymarket_book_queue(
-    queue: asyncio.Queue[dict[str, Any]]
+    queue: asyncio.Queue[dict[str, Any]],
+    strategy_state: Optional[StrategyState] = None,
 ) -> AsyncGenerator[str, None]:
+    """处理订单簿队列，执行策略并推送事件"""
     while True:
         try:
             message = queue.get_nowait()
@@ -471,4 +607,79 @@ async def _drain_polymarket_book_queue(
             payload = message
         else:
             payload = {"raw": message}
+
+        # 推送订单簿事件
         yield PolymarketBookEvent.create(payload).to_sse()
+
+        # 执行策略
+        if strategy_state and isinstance(message, dict):
+            signal_event = _execute_strategy(message, strategy_state)
+            if signal_event:
+                yield signal_event
+
+
+def _execute_strategy(
+    message: dict[str, Any],
+    strategy_state: StrategyState,
+) -> Optional[str]:
+    """执行策略并返回信号事件"""
+    # 更新订单簿
+    strategy_state.update_book(message)
+
+    # 构建快照
+    snapshot = strategy_state.build_snapshot()
+    if snapshot is None:
+        return None
+
+    # 获取策略
+    strategy = StrategyRegistry.get(strategy_state.strategy_id)
+    if strategy is None:
+        return None
+
+    # 构建上下文
+    order_book = OrderBookContext.from_snapshot(snapshot)
+
+    # 生成信号
+    try:
+        signal = strategy.generate_signal(
+            snapshot=snapshot,
+            order_book=order_book,
+            position=strategy_state.position,
+            params={},  # 可通过请求参数传入
+        )
+    except Exception:
+        return None
+
+    if signal is None:
+        return None
+
+    # 只推送有效信号（BUY/SELL），不推送 HOLD
+    if signal.signal_type == SignalType.HOLD:
+        return None
+
+    # 构建市场数据
+    market_data = {
+        "yes_price": snapshot.yes_data.price,
+        "no_price": snapshot.no_data.price,
+        "price_sum": snapshot.price_sum,
+        "yes_best_bid": snapshot.yes_data.best_bid,
+        "yes_best_ask": snapshot.yes_data.best_ask,
+        "no_best_bid": snapshot.no_data.best_bid,
+        "no_best_ask": snapshot.no_data.best_ask,
+    }
+
+    # 构建持仓数据
+    position_data = strategy_state.position.to_dict()
+
+    return StrategySignalEvent.create(
+        signal_type=signal.signal_type.value,
+        reason=signal.reason,
+        market=market_data,
+        position=position_data,
+        strategy_id=strategy_state.strategy_id,
+        yes_size=signal.yes_size,
+        no_size=signal.no_size,
+        yes_price=signal.yes_price,
+        no_price=signal.no_price,
+        metadata=signal.metadata,
+    ).to_sse()

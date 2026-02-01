@@ -164,3 +164,53 @@ class AnalysisChunkEvent(SSEEvent):
             "round": round_number,
             "timestamp": datetime.utcnow().isoformat(),
         })
+
+
+@dataclass
+class StrategySignalEvent(SSEEvent):
+    """策略信号事件"""
+    event_type: str = field(default="strategy_signal", init=False)
+
+    @classmethod
+    def create(
+        cls,
+        signal_type: str,
+        reason: str,
+        market: Optional[dict] = None,
+        position: Optional[dict] = None,
+        execution: Optional[dict] = None,
+        strategy_id: str = "",
+        yes_size: Optional[float] = None,
+        no_size: Optional[float] = None,
+        yes_price: Optional[float] = None,
+        no_price: Optional[float] = None,
+        metadata: Optional[dict] = None,
+    ) -> "StrategySignalEvent":
+        return cls(data={
+            "signal": {
+                "type": signal_type,
+                "reason": reason,
+                "yes_size": yes_size,
+                "no_size": no_size,
+                "yes_price": yes_price,
+                "no_price": no_price,
+                "metadata": metadata or {},
+            },
+            "market": market,
+            "position": position,
+            "execution": execution,
+            "strategy": {"id": strategy_id} if strategy_id else None,
+            "timestamp": datetime.utcnow().isoformat(),
+        })
+
+    @classmethod
+    def from_signal_event(cls, signal_event: Any) -> "StrategySignalEvent":
+        """从 SignalEvent 模型创建 SSE 事件"""
+        if hasattr(signal_event, "to_dict"):
+            data = signal_event.to_dict()
+        elif isinstance(signal_event, dict):
+            data = signal_event
+        else:
+            data = {"raw": str(signal_event)}
+        data["timestamp"] = datetime.utcnow().isoformat()
+        return cls(data=data)

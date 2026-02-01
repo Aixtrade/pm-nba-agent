@@ -128,6 +128,46 @@ export interface PolymarketBookEventData {
   [key: string]: unknown
 }
 
+// 策略信号事件数据
+export interface StrategySignalEventData {
+  signal?: {
+    type: 'BUY' | 'SELL' | 'HOLD'
+    reason: string
+    yes_size?: number | null
+    no_size?: number | null
+    yes_price?: number | null
+    no_price?: number | null
+    metadata?: Record<string, unknown>
+  }
+  market?: {
+    yes_price?: number
+    no_price?: number
+    price_sum: number
+    yes_best_bid?: number | null
+    yes_best_ask?: number | null
+    no_best_bid?: number | null
+    no_best_ask?: number | null
+  }
+  position?: {
+    yes_size: number
+    no_size: number
+    yes_avg_cost: number
+    no_avg_cost: number
+    avg_sum: number
+    imbalance: number
+    is_balanced: boolean
+  }
+  execution?: {
+    success: boolean
+    orders?: Array<Record<string, unknown>>
+    error?: string | null
+  }
+  strategy?: {
+    id: string
+  }
+  timestamp: string
+}
+
 // SSE 事件类型
 export type SSEEventType =
   | 'scoreboard'
@@ -137,6 +177,7 @@ export type SSEEventType =
   | 'heartbeat'
   | 'polymarket_info'
   | 'polymarket_book'
+  | 'strategy_signal'
   | 'error'
   | 'game_end'
 
@@ -149,6 +190,7 @@ export interface SSEEventHandlers {
   onHeartbeat?: (data: HeartbeatEventData) => void
   onPolymarketInfo?: (data: PolymarketInfoEventData) => void
   onPolymarketBook?: (data: PolymarketBookEventData) => void
+  onStrategySignal?: (data: StrategySignalEventData) => void
   onError?: (data: ErrorEventData) => void
   onGameEnd?: (data: GameEndEventData) => void
   onOpen?: () => void

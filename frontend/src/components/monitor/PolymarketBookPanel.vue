@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useAuthStore, useGameStore, useToastStore } from '@/stores'
+import StrategySignalPanel from './StrategySignalPanel.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -56,6 +57,21 @@ const positionSides = ref<
   }>
 >([])
 const positionsLoading = ref(false)
+
+// 策略信号（从 store 获取）
+const strategySignals = computed(() => {
+  // 转换 store 中的数据格式以匹配 StrategySignalPanel 的期望格式
+  return gameStore.strategySignals.map(sig => ({
+    event_type: 'signal' as const,
+    timestamp: sig.timestamp ? new Date(sig.timestamp).getTime() : Date.now(),
+    signal: sig.signal,
+    market: sig.market,
+    position: sig.position,
+    execution: sig.execution,
+    strategy: sig.strategy,
+    error: null,
+  }))
+})
 
 const positionSizeByOutcome = computed(() => {
   const map: Record<string, number> = {}
@@ -596,6 +612,13 @@ watch(
           </div>
         </div>
       </div>
+
+      <!-- 策略信号面板 -->
+      <StrategySignalPanel
+        :signals="strategySignals"
+        strategy-id="merge_long"
+        class="mt-4"
+      />
 
     </div>
   </div>

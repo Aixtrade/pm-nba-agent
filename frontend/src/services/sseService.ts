@@ -255,6 +255,9 @@ export class SSEService {
         case 'polymarket_book':
           this.handlers.onPolymarketBook?.(parsed)
           break
+        case 'strategy_signal':
+          this.handlers.onStrategySignal?.(parsed)
+          break
         case 'error':
           this.handlers.onError?.(parsed)
           break
