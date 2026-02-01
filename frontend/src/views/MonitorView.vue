@@ -50,7 +50,7 @@ const gameStore = useGameStore()
       <!-- Polymarket 右侧边栏 -->
       <div class="lg:col-span-2 xl:col-span-1 lg:sticky lg:top-20 lg:h-[calc(100vh-10rem)] lg:overflow-hidden">
         <div class="h-full overflow-y-auto pr-1">
-          <PolymarketBookPanel />
+          <PolymarketBookPanel :show-position-cost="true" />
         </div>
       </div>
     </div>

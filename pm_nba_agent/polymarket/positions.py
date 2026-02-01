@@ -47,6 +47,9 @@ async def get_current_positions(
 ) -> Optional[list[dict[str, Any]]]:
     """查询用户当前持仓
 
+    参考文档:
+        https://docs.polymarket.com/api-reference/core/get-current-positions-for-a-user
+
     Args:
         user_address: 用户钱包地址（0x 开头）。为空时使用 proxy_address 或环境变量。
         condition_ids: condition_id 列表（对应 market 参数）。

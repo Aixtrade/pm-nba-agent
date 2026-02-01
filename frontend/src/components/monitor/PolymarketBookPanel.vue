@@ -2,6 +2,15 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useAuthStore, useGameStore, useToastStore } from '@/stores'
 
+const props = withDefaults(
+  defineProps<{
+    showPositionCost?: boolean
+  }>(),
+  {
+    showPositionCost: true,
+  }
+)
+
 const authStore = useAuthStore()
 const gameStore = useGameStore()
 const toastStore = useToastStore()
@@ -38,7 +47,14 @@ const buyPriceByToken = reactive<Record<string, string>>({})
 const sellSizeByToken = reactive<Record<string, string>>({})
 const sellPriceByToken = reactive<Record<string, string>>({})
 const submitting = reactive<Record<string, boolean>>({})
-const positionSides = ref<Array<{ outcome: string; size: number; asset?: string | null }>>([])
+const positionSides = ref<
+  Array<{
+    outcome: string
+    size: number
+    initial_value?: number | null
+    asset?: string | null
+  }>
+>([])
 const positionsLoading = ref(false)
 
 const positionSizeByOutcome = computed(() => {
@@ -80,18 +96,21 @@ function formatSize(value: number | null | undefined): string {
   return value.toFixed(2)
 }
 
-function normalizeSides(sides: Array<{ outcome: string; size: number }>) {
+function normalizeSides(sides: Array<{ outcome: string; size: number; initial_value?: number | null }>) {
   return sides
     .map(side => ({
       outcome: String(side.outcome),
       size: Number(side.size),
+      initial_value: side.initial_value === null || side.initial_value === undefined
+        ? null
+        : Number(side.initial_value),
     }))
     .sort((a, b) => a.outcome.localeCompare(b.outcome))
 }
 
 function isSameSides(
-  current: Array<{ outcome: string; size: number }>,
-  next: Array<{ outcome: string; size: number }>
+  current: Array<{ outcome: string; size: number; initial_value?: number | null }>,
+  next: Array<{ outcome: string; size: number; initial_value?: number | null }>
 ) {
   const a = normalizeSides(current)
   const b = normalizeSides(next)
@@ -100,6 +119,7 @@ function isSameSides(
     if (a[i].outcome !== b[i].outcome) return false
     if (Number.isNaN(a[i].size) || Number.isNaN(b[i].size)) return false
     if (a[i].size !== b[i].size) return false
+    if (a[i].initial_value !== b[i].initial_value) return false
   }
   return true
 }
@@ -393,7 +413,7 @@ watch(
 </script>
 
 <template>
-  <div class="card glass-card">
+  <div class="card glass-card ring-1 ring-base-content/30 ring-offset-2 ring-offset-base-100">
     <div class="card-body">
       <div class="flex items-start justify-between gap-3">
         <div>
@@ -409,7 +429,7 @@ watch(
         下单前请先登录
       </div>
 
-      <div class="mt-3 rounded-lg border border-base-200/70 px-3 py-2">
+        <div class="mt-3 rounded-lg border border-base-200/70 px-3 py-2 ring-1 ring-base-content/20">
         <div class="flex items-center justify-between gap-3">
           <div class="text-sm font-semibold">当前持仓</div>
           <div class="flex items-center gap-2 text-xs text-base-content/60">
@@ -434,6 +454,9 @@ watch(
           <div class="text-sm font-semibold text-base-content">
             {{ formatSize(side.size) }}
           </div>
+          <div v-if="props.showPositionCost" class="text-[11px] text-base-content/60">
+            成本 {{ formatSize(side.initial_value ?? null) }}
+          </div>
         </div>
         <div v-if="positionSides.length === 0" class="col-span-2 text-center text-base-content/50">
           暂无持仓数据
@@ -449,7 +472,7 @@ watch(
         <div
           v-for="row in rows"
           :key="row.tokenId"
-          class="rounded-lg border border-base-200/70 px-3 py-2"
+          class="rounded-lg border border-base-200/70 px-3 py-2 ring-1 ring-base-content/20"
         >
           <div class="flex items-center justify-between gap-3">
             <div>
@@ -541,29 +564,30 @@ watch(
                   卖出
                 </button>
               </div>
-              <div class="flex items-center gap-2 text-[11px] text-base-content/60">
-                <span class="w-8">快速</span>
-                <button
-                  class="btn btn-xs btn-ghost"
-                  :disabled="getQuickSellDisabled(row.outcome)"
-                  @click="setQuickSellSize(row.outcome, row.tokenId, 0.25)"
-                >
-                  25%
-                </button>
-                <button
-                  class="btn btn-xs btn-ghost"
-                  :disabled="getQuickSellDisabled(row.outcome)"
-                  @click="setQuickSellSize(row.outcome, row.tokenId, 0.5)"
-                >
-                  50%
-                </button>
-                <button
-                  class="btn btn-xs btn-ghost"
-                  :disabled="getQuickSellDisabled(row.outcome)"
-                  @click="setQuickSellSize(row.outcome, row.tokenId, 1)"
-                >
-                  MAX
-                </button>
+              <div class="flex items-center justify-between gap-2 text-[11px] text-base-content/60">
+                <div class="flex items-center gap-2">
+                  <button
+                    class="btn btn-xs btn-ghost border border-base-300/80 bg-base-100/80 text-base-content/70 hover:border-base-400 hover:bg-base-200/60"
+                    :disabled="getQuickSellDisabled(row.outcome)"
+                    @click="setQuickSellSize(row.outcome, row.tokenId, 0.25)"
+                  >
+                    25%
+                  </button>
+                  <button
+                    class="btn btn-xs btn-ghost border border-base-300/80 bg-base-100/80 text-base-content/70 hover:border-base-400 hover:bg-base-200/60"
+                    :disabled="getQuickSellDisabled(row.outcome)"
+                    @click="setQuickSellSize(row.outcome, row.tokenId, 0.5)"
+                  >
+                    50%
+                  </button>
+                  <button
+                    class="btn btn-xs btn-ghost border border-base-300/80 bg-base-100/80 text-base-content/70 hover:border-base-400 hover:bg-base-200/60"
+                    :disabled="getQuickSellDisabled(row.outcome)"
+                    @click="setQuickSellSize(row.outcome, row.tokenId, 1)"
+                  >
+                    MAX
+                  </button>
+                </div>
                 <span class="text-[10px] text-base-content/50">
                   可用 {{ formatSize(positionSizeByOutcome[row.outcome] ?? 0) }}
                 </span>

@@ -21,6 +21,7 @@ def _build_position_sides(
 ) -> list[PolymarketPositionSide]:
     sizes: dict[str, float] = {}
     assets: dict[str, str | None] = {}
+    initial_values: dict[str, float] = {}
 
     for position in positions:
         outcome = str(position.get("outcome") or "").strip()
@@ -31,6 +32,12 @@ def _build_position_sides(
             except (TypeError, ValueError):
                 size = 0.0
             sizes[outcome] = sizes.get(outcome, 0.0) + size
+            initial_value = position.get("initialValue", 0)
+            try:
+                cost = float(initial_value)
+            except (TypeError, ValueError):
+                cost = 0.0
+            initial_values[outcome] = initial_values.get(outcome, 0.0) + cost
             asset = position.get("asset")
             if asset and outcome not in assets:
                 assets[outcome] = str(asset)
@@ -38,6 +45,7 @@ def _build_position_sides(
         opposite_outcome = str(position.get("oppositeOutcome") or "").strip()
         if opposite_outcome and opposite_outcome not in sizes:
             sizes[opposite_outcome] = 0.0
+            initial_values[opposite_outcome] = 0.0
             opposite_asset = position.get("oppositeAsset")
             if opposite_asset and opposite_outcome not in assets:
                 assets[opposite_outcome] = str(opposite_asset)
@@ -46,6 +54,8 @@ def _build_position_sides(
         for outcome in outcomes:
             if outcome not in sizes:
                 sizes[outcome] = 0.0
+            if outcome not in initial_values:
+                initial_values[outcome] = 0.0
 
     ordered_outcomes = outcomes or list(sizes.keys())
 
@@ -53,6 +63,7 @@ def _build_position_sides(
         PolymarketPositionSide(
             outcome=outcome,
             size=sizes.get(outcome, 0.0),
+            initial_value=initial_values.get(outcome, 0.0),
             asset=assets.get(outcome),
         )
         for outcome in ordered_outcomes

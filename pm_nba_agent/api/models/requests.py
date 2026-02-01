@@ -230,6 +230,7 @@ class PolymarketPositionSide(BaseModel):
 
     outcome: str = Field(..., description="Outcome 名称")
     size: float = Field(..., description="持仓份额")
+    initial_value: float = Field(..., description="持仓成本（initialValue 汇总）")
     asset: str | None = Field(default=None, description="Token 资产 ID")
 
 
