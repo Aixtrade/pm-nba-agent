@@ -144,7 +144,7 @@ function formatPct(v?: number | null): string {
           <div class="flex items-start gap-3">
             <!-- 信号类型标签 -->
             <div
-              class="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg text-sm font-bold"
+              class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-sm font-bold"
               :class="signalTypeClass(latestSignal.signal?.type)"
             >
               {{ signalTypeLabel(latestSignal.signal?.type) }}
@@ -183,7 +183,7 @@ function formatPct(v?: number | null): string {
             </div>
           </div>
           <!-- 时间戳 -->
-          <div class="flex-shrink-0 text-xs text-base-content/50">
+          <div class="shrink-0 text-xs text-base-content/50">
             {{ formatTime(latestSignal.timestamp) }}
           </div>
         </div>
@@ -223,10 +223,10 @@ function formatPct(v?: number | null): string {
             :key="`${sig.timestamp}-${index}`"
             class="flex items-center gap-2 rounded-md bg-base-200/30 px-2 py-1.5 text-xs"
           >
-            <span class="w-14 flex-shrink-0 text-base-content/50">
+            <span class="w-14 shrink-0 text-base-content/50">
               {{ formatTime(sig.timestamp) }}
             </span>
-            <span class="badge badge-xs flex-shrink-0" :class="signalBadgeClass(sig.signal?.type)">
+            <span class="badge badge-xs shrink-0" :class="signalBadgeClass(sig.signal?.type)">
               {{ signalTypeLabel(sig.signal?.type) }}
             </span>
             <span class="flex-1 truncate text-base-content/70">

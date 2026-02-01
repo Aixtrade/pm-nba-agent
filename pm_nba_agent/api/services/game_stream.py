@@ -8,7 +8,6 @@ from typing import Any, AsyncGenerator, Optional
 
 from ..models.requests import LiveStreamRequest
 from ..models.events import (
-    SSEEvent,
     ScoreboardEvent,
     BoxscoreEvent,
     PlayByPlayEvent,
