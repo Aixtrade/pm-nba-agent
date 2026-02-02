@@ -15,9 +15,11 @@ Build, lint, test
 Environment setup
 - Install deps (recommended): `uv sync`
 - Create venv manually: `uv venv` then `source .venv/bin/activate`
+- If you skip activation, prefer `uv run ...` for all commands.
 
 Build
 - Package build (standard): `python -m build`
+- With uv (if venv not activated): `uv run python -m build`
 - Note: no explicit build scripts in this repo beyond PEP 517 metadata.
 
 Run examples
@@ -25,6 +27,7 @@ Run examples
 - `python examples/basic_usage.py`
 - `python examples/advanced_usage.py`
 - `python examples/player_stats_analysis.py`
+- With uv: `uv run python examples/example.py`
 
 Lint/format
 - No lint/format tooling configured in this repo.

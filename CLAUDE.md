@@ -4,156 +4,137 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-PM NBA Agent 是一个专门用于实时分析 NBA 比赛数据的 Python 库。它从 Polymarket 事件 URL 解析 NBA 比赛信息，并通过 nba_api 获取实时比赛数据。
+PM NBA Agent 是一个 NBA 比赛实时分析与 Polymarket 交易系统。包含 Python 后端（FastAPI + SSE）和 Vue3 前端监控界面。
 
 - 包名: pm-nba-agent
 - Python 版本: >= 3.12
-- 依赖管理器: uv (推荐)
-- 核心代码: pm_nba_agent/
-- 测试: tests/
+- 依赖管理器: uv
+- 后端: pm_nba_agent/
+- 前端: frontend/ (Vue3 + Vite + TailwindCSS + DaisyUI)
 
 ## 开发命令
 
-### 环境设置
+### 后端
 ```bash
-# 创建虚拟环境并安装依赖（推荐）
+# 安装依赖
 uv sync
 
-# 手动创建虚拟环境
-uv venv
-source .venv/bin/activate  # macOS/Linux
-```
+# 启动 API 服务（开发）
+uv run uvicorn pm_nba_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
 
-### 运行示例
-```bash
-python examples/example.py
-python examples/basic_usage.py
-python examples/advanced_usage.py
-python examples/player_stats_analysis.py
+# 运行测试（脚本式，非 pytest）
+uv run python tests/test_today_games.py
+uv run python tests/test_full_flow.py
 
-# 或使用 uv 运行
+# 运行示例
 uv run python examples/example.py
 ```
 
-### 运行测试
+### 前端
 ```bash
-# 测试是脚本式，非 pytest
-python tests/test_today_games.py
-python tests/test_full_flow.py
-
-# 使用 uv 运行
-uv run python tests/test_today_games.py
+cd frontend
+pnpm install  # 或 npm install
+pnpm dev      # 启动开发服务器 (端口 3000)
+pnpm build    # 构建生产版本
+pnpm type-check  # TypeScript 类型检查
 ```
 
-### 构建包
+### Docker 部署
 ```bash
-python -m build
+cp .env.example .env  # 配置环境变量
+docker compose up -d
+# 前端: http://localhost, API: http://localhost/api/docs
 ```
 
 ## 架构概览
 
-### 数据流程
-1. **URL 解析** (parsers/polymarket_parser.py): 从 Polymarket URL 提取球队缩写和日期
-2. **球队信息** (nba/team_resolver.py): 通过缩写获取完整球队信息
-3. **比赛查找** (nba/game_finder.py): 根据球队和日期查找 game_id
-4. **数据获取** (nba/live_stats.py): 使用 game_id 获取实时比赛数据
-5. **数据模型** (models/game_data.py): 结构化的比赛数据模型
+### 系统架构
+```
+前端 (Vue3) <-- SSE --> FastAPI API <-- WebSocket --> Polymarket
+                            |
+                            v
+                      NBA API (nba_api)
+```
 
-### 核心模块
-- `pm_nba_agent/main.py`: 主入口，编排完整流程
-- `pm_nba_agent/parsers/`: URL 解析器
-- `pm_nba_agent/nba/`: NBA API 包装器（team_resolver, game_finder, live_stats）
-- `pm_nba_agent/models/`: 数据模型（GameData, TeamStats, PlayerStats）
+### 后端模块 (pm_nba_agent/)
+- `api/`: FastAPI 应用，SSE 实时数据流
+  - `app.py`: 应用入口，生命周期管理
+  - `routes/live_stream.py`: SSE 流端点
+  - `services/game_stream.py`: 核心数据流服务，整合 NBA 数据、Polymarket 订单簿、策略执行
+- `nba/`: NBA 数据获取（team_resolver, game_finder, live_stats, playbyplay）
+- `polymarket/`: Polymarket 交易集成
+  - `ws_client.py`, `book_stream.py`: WebSocket 订单簿订阅
+  - `strategies/`: 交易策略框架（BaseStrategy, StrategyRegistry）
+  - `executor.py`: 策略执行器
+  - `orders.py`, `positions.py`: 订单与持仓管理
+- `agent/`: AI 分析模块（GameAnalyzer, GameContext, LLMClient）
+- `pregame/`: 赛前分析（数据采集器 + 分析器）
+- `models/`: 数据模型（GameData, TeamStats, PlayerStats）
+- `parsers/`: Polymarket URL 解析
 
-### API 使用策略
-- **Live API** (nba_api.live): 优先用于今日比赛，速度快
-- **Stats API** (nba_api.stats): 降级选项，用于历史或未来比赛
-- **限流控制**: 所有 API 调用前使用 `time.sleep(0.6)` 避免被限流
+### 前端模块 (frontend/src/)
+- `views/MonitorView.vue`: 主监控页面
+- `components/monitor/`: 监控组件
+  - `ScoreBoard.vue`: 比分板
+  - `BoxScore.vue`, `PlayerStatsTable.vue`: 统计面板
+  - `PolymarketBookPanel.vue`: 订单簿显示
+  - `StrategySignalPanel.vue`: 策略信号
+  - `AgentAnalysisPanel.vue`: AI 分析
+  - `StreamConfig.vue`: 流配置
+  - `StrategySidebar.vue`: 策略侧边栏
 
-## 数据模型
+### 数据流
+1. 前端发起 SSE 连接 → `POST /api/v1/live/stream`
+2. `GameStreamService` 解析 Polymarket URL，获取市场信息
+3. 订阅 Polymarket WebSocket 获取实时订单簿
+4. 轮询 NBA API 获取比分、统计、逐回合数据
+5. 策略引擎根据订单簿变化生成交易信号
+6. AI 分析器定时分析比赛态势
+7. 所有数据通过 SSE 推送到前端
 
-### GameData (完整比赛数据)
-- `game_info`: GameInfo - 比赛基本信息（ID, 日期, 状态, 节数, 时钟）
-- `home_team`: TeamStats - 主队数据
-- `away_team`: TeamStats - 客队数据
-- `players`: List[PlayerStats] - 球员列表
-
-### GameInfo
-- `status`: 比赛状态文本（'Scheduled', 'Live - Q3', 'Final'）
-- `game_status_code`: 1=未开始, 2=进行中, 3=已结束
-
-### TeamStats
-- 使用 `from_live_api()` 从 API 响应创建
-- 包含球队名称、缩写、比分和详细统计
-
-### PlayerStats
-- 使用 `from_live_api()` 从 API 响应创建
-- `on_court`: 球员是否在场上
-- `stats`: 包含得分、篮板、助攻等详细统计
+### SSE 事件类型
+- `scoreboard`: 比分更新
+- `boxscore`: 详细统计
+- `polymarket_info`: 市场元信息
+- `polymarket_book`: 订单簿更新
+- `strategy_signal`: 交易信号
+- `analysis_chunk`: AI 分析流式输出
+- `game_end`: 比赛结束
+- `heartbeat`: 心跳
+- `error`: 错误
 
 ## 代码规范
 
-### 类型注解
-- 所有公共函数使用类型提示
-- 失败时返回 None 使用 `Optional[...]`
-- 使用 Python 3.12 内置泛型: `list[TeamInfo]` 而非 `List[TeamInfo]`
-- API 负载使用 `Dict[str, Any]` 或 `dict`
+### Python
+- 类型注解使用 Python 3.12 内置泛型: `list[T]`, `dict[K, V]`
+- dataclass 配合 `from_*` 工厂方法和 `to_dict()` 序列化
+- 外部 API 调用使用 try/except，失败返回 None
+- NBA API 调用前必须 `time.sleep(0.6)` 限流
+- 日志使用 loguru: `from loguru import logger`
 
-### 错误处理
-- 外部 API 调用使用 try/except 包装
-- 失败时返回 None 或空列表，并打印清晰的错误消息
-- 避免对预期的外部失败（网络、缺失数据）抛出异常
-- 保持异常作用域狭窄，靠近 API 调用
+### 前端
+- Vue3 Composition API + `<script setup>`
+- Pinia 状态管理
+- TailwindCSS v4 + DaisyUI v5
 
-### 命名规范
-- 模块: snake_case
-- 函数: snake_case，使用动词（如 `get_live_game_data`）
-- 类: CapWords（如 `GameData`, `TeamStats`）
-- 布尔变量: 使用前缀 `is_`, `has_`, `use_`
+## 添加新策略
 
-### 数据类设计
-- 使用 dataclass 构建结构化数据
-- 提供 `from_*` 类方法适配外部 API 负载
-- 在模型上保留序列化辅助方法（如 `to_dict`）
-- 可变默认值使用 `field(default_factory=...)`
+1. 在 `pm_nba_agent/polymarket/strategies/` 创建策略文件
+2. 继承 `BaseStrategy`，实现 `strategy_id` 和 `generate_signal()`
+3. 使用 `@StrategyRegistry.register("strategy_id")` 装饰器注册
+4. 策略通过 `LiveStreamRequest.strategy_id` 参数选择
 
-### API 负载处理
-- 读取 API 字典时使用 `.get(...)` 并提供默认值
-- 不要修改原始 API 负载，构建新的字典/模型
-- 将缺失字段视为预期情况，默认为安全值
+## 环境变量
 
-## 测试注意事项
-
-- 测试依赖真实的 NBA API，受代码中的限流控制
-- 测试依赖实际比赛安排，失败可能由于赛程或 API 状态
-- 如果没有比赛安排，预期空结果而非错误
-- 当比赛可用时重新运行测试
-- 避免并行运行测试以降低 API 限流风险
-
-## 常见修改场景
-
-### 添加新的 NBA API 调用
-1. 在 `pm_nba_agent/nba/` 下的相应模块中添加函数
-2. 在函数开始处添加 `time.sleep(0.6)` 限流
-3. 使用 try/except 包装 API 调用
-4. 失败时返回 None 或空列表，并打印清晰消息
-
-### 修改数据模型
-1. 更新 `pm_nba_agent/models/game_data.py` 中的 dataclass
-2. 更新相应的 `from_live_api()` 或 `from_stats_api()` 方法
-3. 更新 `to_dict()` 方法以保持序列化一致性
-4. 检查是否影响示例代码，必要时更新
-
-### 添加新功能
-1. 考虑现有的模块结构，将代码放在合适的位置
-2. 保持公共 API 的向后兼容性
-3. 更新 README.md 中的示例（如果影响公共 API）
-4. 添加使用示例到 examples/ 目录
+```bash
+OPENAI_API_KEY=sk-...      # AI 分析（可选）
+OPENAI_MODEL=gpt-4o-mini   # 模型选择
+ANALYSIS_INTERVAL=30       # 分析间隔（秒）
+```
 
 ## 重要限制
 
-- 不要移除或缩短 API 限流的 `time.sleep(0.6)` 调用
-- 不要修改公共函数签名，除非必要
-- 保持与 Python 3.12+ 的兼容性
+- 不要移除 NBA API 的 `time.sleep(0.6)` 限流
 - NBA API 时间为美国东部时间 (EST/EDT)
-- Live API 适用于当天比赛，历史或未来比赛使用 Stats API
+- Live API 仅适用于当天比赛
+- Polymarket WebSocket 需要有效的 token_id 列表
