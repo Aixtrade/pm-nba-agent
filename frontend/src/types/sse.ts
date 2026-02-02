@@ -12,16 +12,6 @@ export interface LiveStreamRequest {
   include_scoreboard?: boolean
   include_boxscore?: boolean
   analysis_interval?: number
-  strategy_id?: string
-  strategy_params?: Record<string, unknown>
-  enable_trading?: boolean
-  execution_mode?: 'SIMULATION' | 'REAL'
-  order_type?: 'GTC' | 'GTD'
-  order_expiration?: string | null
-  min_order_amount?: number
-  trade_cooldown_seconds?: number
-  private_key?: string | null
-  proxy_address?: string | null
 }
 
 // Scoreboard 事件数据

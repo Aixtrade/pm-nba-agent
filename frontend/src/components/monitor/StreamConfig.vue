@@ -31,8 +31,6 @@ const connectionStore = useConnectionStore()
 const STORAGE_KEY = 'pm_nba_agent_sources'
 const SELECTED_KEY = 'pm_nba_agent_selected_source'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
-const POLYMARKET_PRIVATE_KEY = 'POLYMARKET_PRIVATE_KEY'
-const POLYMARKET_PROXY_ADDRESS = 'POLYMARKET_PROXY_ADDRESS'
 
 const sources = ref<MonitorSource[]>([])
 const selectedSourceId = ref<string | null>(null)
@@ -45,13 +43,6 @@ const pollInterval = ref(10)
 const includeScoreboard = ref(true)
 const includeBoxscore = ref(true)
 const analysisInterval = ref(30)
-const strategyId = ref('merge_long')
-const minArbitrageGap = ref(0.01)
-const totalBudget = ref(10)
-const enableTrading = ref(false)
-const executionMode = ref<'SIMULATION' | 'REAL'>('SIMULATION')
-const minOrderAmount = ref(1)
-const tradeCooldownSeconds = ref(0)
 
 // 是否显示高级选项
 const showAdvanced = ref(false)
@@ -135,13 +126,6 @@ function updateSourceName(source: MonitorSource) {
   persistSources()
 }
 
-function loadPolymarketConfig() {
-  return {
-    privateKey: localStorage.getItem(POLYMARKET_PRIVATE_KEY) ?? '',
-    proxyAddress: localStorage.getItem(POLYMARKET_PROXY_ADDRESS) ?? '',
-  }
-}
-
 async function parsePolymarketUrl(url: string) {
   const response = await fetch(`${API_BASE_URL}/api/v1/parse/polymarket`, {
     method: 'POST',
@@ -210,27 +194,12 @@ async function handleAddSource() {
 function handleConnect() {
   if (!canConnect.value || !currentSource.value) return
 
-  const { privateKey, proxyAddress } = loadPolymarketConfig()
-  const trimmedPrivateKey = privateKey.trim()
-  const trimmedProxyAddress = proxyAddress.trim()
-
   emit('connect', {
     url: currentSource.value.url,
     poll_interval: pollInterval.value,
     include_scoreboard: includeScoreboard.value,
     include_boxscore: includeBoxscore.value,
     analysis_interval: analysisInterval.value,
-    strategy_id: strategyId.value,
-    strategy_params: {
-      min_arbitrage_gap: minArbitrageGap.value,
-      total_budget: totalBudget.value,
-    },
-    enable_trading: enableTrading.value,
-    execution_mode: executionMode.value,
-    min_order_amount: minOrderAmount.value,
-    trade_cooldown_seconds: tradeCooldownSeconds.value,
-    private_key: trimmedPrivateKey ? trimmedPrivateKey : null,
-    proxy_address: trimmedProxyAddress ? trimmedProxyAddress : null,
   })
 }
 
@@ -383,102 +352,6 @@ onMounted(() => {
           </div>
         </div>
 
-        <div class="divider my-2">策略与交易</div>
-
-        <div class="grid gap-4 sm:grid-cols-2">
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">策略 ID</span>
-            </label>
-            <select
-              v-model="strategyId"
-              class="select select-bordered select-sm"
-              :disabled="connectionStore.isConnected"
-            >
-              <option value="merge_long">merge_long</option>
-            </select>
-          </div>
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">最小套利空间</span>
-            </label>
-            <input
-              v-model.number="minArbitrageGap"
-              type="number"
-              min="0"
-              step="0.001"
-              class="input input-bordered input-sm"
-              :disabled="connectionStore.isConnected"
-            />
-          </div>
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">单次预算 (USDC)</span>
-            </label>
-            <input
-              v-model.number="totalBudget"
-              type="number"
-              min="0"
-              step="0.1"
-              class="input input-bordered input-sm"
-              :disabled="connectionStore.isConnected"
-            />
-          </div>
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">最小下单量</span>
-            </label>
-            <input
-              v-model.number="minOrderAmount"
-              type="number"
-              min="0"
-              step="0.1"
-              class="input input-bordered input-sm"
-              :disabled="connectionStore.isConnected"
-            />
-          </div>
-        </div>
-
-        <div class="flex flex-wrap gap-4">
-          <label class="label cursor-pointer gap-2">
-            <input
-              v-model="enableTrading"
-              type="checkbox"
-              class="checkbox checkbox-sm"
-              :disabled="connectionStore.isConnected"
-            />
-            <span class="label-text">启用自动下单</span>
-          </label>
-        </div>
-
-        <div class="grid gap-4 sm:grid-cols-2">
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">执行模式</span>
-            </label>
-            <select
-              v-model="executionMode"
-              class="select select-bordered select-sm"
-              :disabled="connectionStore.isConnected || !enableTrading"
-            >
-              <option value="SIMULATION">SIMULATION</option>
-              <option value="REAL">REAL</option>
-            </select>
-          </div>
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">下单冷却 (秒)</span>
-            </label>
-            <input
-              v-model.number="tradeCooldownSeconds"
-              type="number"
-              min="0"
-              step="1"
-              class="input input-bordered input-sm"
-              :disabled="connectionStore.isConnected || !enableTrading"
-            />
-          </div>
-        </div>
       </div>
 
       <!-- 操作按钮 -->

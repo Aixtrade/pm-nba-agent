@@ -1,7 +1,6 @@
 """比赛数据流服务"""
 
 import asyncio
-import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, AsyncGenerator, Optional
@@ -26,8 +25,6 @@ from ...nba.team_resolver import get_team_info
 from ...parsers.polymarket_parser import PolymarketEventInfo
 from ...polymarket.resolver import MarketResolver
 from ...polymarket.book_stream import PolymarketBookStream
-from ...polymarket.orders import create_polymarket_orders_batch
-from ...polymarket.positions import get_current_positions
 from ...polymarket.models import (
     EventInfo,
     MarketSnapshot,
@@ -36,25 +33,16 @@ from ...polymarket.models import (
     OrderBookContext,
     PositionContext,
 )
-from ...polymarket.strategies import StrategyRegistry, SignalType
+from ...polymarket.strategies import StrategyRegistry
 from ...models.game_data import GameData
 
 @dataclass
 class StrategyState:
-    """策略执行状态"""
+    """策略执行状态（仅用于信号生成，不执行下单）"""
     strategy_id: str = "merge_long"
     yes_token_id: str = ""
     no_token_id: str = ""
     position: PositionContext = None  # type: ignore
-    enable_trading: bool = False
-    execution_mode: str = "SIMULATION"
-    order_type: str = "GTC"
-    order_expiration: Optional[str] = None
-    min_order_amount: float = 1.0
-    trade_cooldown_seconds: float = 0.0
-    last_trade_ts: float = 0.0
-    private_key: Optional[str] = None
-    proxy_address: Optional[str] = None
     strategy_params: dict[str, Any] = field(default_factory=dict)
     # 订单簿缓存
     yes_bids: list[OrderLevel] = None  # type: ignore
@@ -322,19 +310,9 @@ class GameStreamService:
                                     len(asset_ids),
                                 )
 
-                                # 初始化策略状态
+                                # 初始化策略状态（仅用于信号生成）
                                 strategy_state = _init_strategy_state(
                                     polymarket_event,
-                                    strategy_id=request.strategy_id,
-                                    strategy_params=request.strategy_params,
-                                    enable_trading=request.enable_trading,
-                                    execution_mode=request.execution_mode,
-                                    order_type=request.order_type,
-                                    order_expiration=request.order_expiration,
-                                    min_order_amount=request.min_order_amount,
-                                    trade_cooldown_seconds=request.trade_cooldown_seconds,
-                                    private_key=request.private_key,
-                                    proxy_address=request.proxy_address,
                                 )
                                 if strategy_state:
                                     logger.info(
@@ -343,8 +321,6 @@ class GameStreamService:
                                         strategy_state.yes_token_id[:8],
                                         strategy_state.no_token_id[:8],
                                     )
-                                    if strategy_state.enable_trading:
-                                        await _sync_strategy_position(strategy_state)
                                 if book_task is None and polymarket_book_queue is not None:
                                     book_task = asyncio.create_task(
                                         _consume_polymarket_book_queue(
@@ -714,16 +690,8 @@ def _init_strategy_state(
     *,
     strategy_id: str = "merge_long",
     strategy_params: Optional[dict[str, Any]] = None,
-    enable_trading: bool = False,
-    execution_mode: str = "SIMULATION",
-    order_type: str = "GTC",
-    order_expiration: Optional[str] = None,
-    min_order_amount: float = 1.0,
-    trade_cooldown_seconds: float = 0.0,
-    private_key: Optional[str] = None,
-    proxy_address: Optional[str] = None,
 ) -> Optional[StrategyState]:
-    """从事件信息初始化策略状态"""
+    """从事件信息初始化策略状态（仅用于信号生成）"""
     tokens = event_info.tokens
     if len(tokens) < 2:
         return None
@@ -749,48 +717,13 @@ def _init_strategy_state(
         return None
 
     normalized_strategy_id = str(strategy_id or "merge_long").strip() or "merge_long"
-    normalized_execution_mode = str(execution_mode or "SIMULATION").strip().upper()
-    if normalized_execution_mode not in {"SIMULATION", "REAL"}:
-        normalized_execution_mode = "SIMULATION"
-    normalized_order_type = str(order_type or "GTC").strip().upper()
-    if normalized_order_type not in {"GTC", "GTD"}:
-        normalized_order_type = "GTC"
 
     return StrategyState(
         strategy_id=normalized_strategy_id,
         yes_token_id=yes_token_id,
         no_token_id=no_token_id,
-        enable_trading=bool(enable_trading),
-        execution_mode=normalized_execution_mode,
-        order_type=normalized_order_type,
-        order_expiration=order_expiration,
-        min_order_amount=float(min_order_amount) if min_order_amount is not None else 0.0,
-        trade_cooldown_seconds=float(trade_cooldown_seconds)
-        if trade_cooldown_seconds is not None
-        else 0.0,
         strategy_params=strategy_params or {},
-        private_key=private_key,
-        proxy_address=proxy_address,
     )
-
-
-async def _sync_strategy_position(strategy_state: StrategyState) -> None:
-    """同步策略持仓（用于 SELL 验证与持仓展示）"""
-    try:
-        positions = await get_current_positions()
-        if positions:
-            strategy_state.position = PositionContext.from_api_positions(
-                positions,
-                strategy_state.yes_token_id,
-                strategy_state.no_token_id,
-            )
-            logger.info(
-                "持仓同步完成: YES=%.2f, NO=%.2f",
-                strategy_state.position.yes_size,
-                strategy_state.position.no_size,
-            )
-    except Exception as exc:
-        logger.warning("持仓同步失败: {}", exc)
 
 
 async def _drain_polymarket_book_queue(
@@ -899,7 +832,7 @@ async def _execute_strategy(
     strategy_state: StrategyState,
     snapshot: Optional[MarketSnapshot] = None,
 ) -> Optional[str]:
-    """执行策略并返回信号事件"""
+    """执行策略并返回信号事件（仅生成信号，不执行下单）"""
     if snapshot is None:
         # 更新订单簿
         strategy_state.update_book(message)
@@ -947,163 +880,13 @@ async def _execute_strategy(
     # 构建持仓数据
     position_data = strategy_state.position.to_dict()
 
-    execution_data: Optional[dict[str, Any]] = None
-    if signal.signal_type != SignalType.HOLD and strategy_state.enable_trading:
-        now_ts = time.monotonic()
-        if (
-            strategy_state.trade_cooldown_seconds > 0
-            and now_ts - strategy_state.last_trade_ts < strategy_state.trade_cooldown_seconds
-        ):
-            execution_data = {
-                "status": "SKIPPED",
-                "reason": "触发冷却时间",
-                "mode": strategy_state.execution_mode,
-                "cooldown_seconds": strategy_state.trade_cooldown_seconds,
-            }
-            return StrategySignalEvent.create(
-                signal_type=signal.signal_type.value,
-                reason=signal.reason,
-                market=market_data,
-                position=position_data,
-                execution=execution_data,
-                strategy_id=strategy_state.strategy_id,
-                yes_size=signal.yes_size,
-                no_size=signal.no_size,
-                yes_price=signal.yes_price,
-                no_price=signal.no_price,
-                metadata=signal.metadata,
-            ).to_sse()
-
-        valid, reason = strategy.validate_signal(
-            signal, order_book, strategy_state.position, params
-        )
-        if not valid:
-            logger.warning("信号验证失败: {}", reason)
-            execution_data = {
-                "status": "SKIPPED",
-                "reason": reason,
-                "mode": strategy_state.execution_mode,
-            }
-        else:
-            side = "BUY" if signal.signal_type == SignalType.BUY else "SELL"
-            orders_to_submit: list[dict[str, Any]] = []
-            errors: list[str] = []
-
-            if strategy_state.order_type == "GTD" and not strategy_state.order_expiration:
-                errors.append("GTD 订单必须提供 expiration")
-
-            if signal.yes_size and signal.yes_size >= strategy_state.min_order_amount:
-                if signal.yes_price is None:
-                    errors.append("YES 订单缺少价格")
-                else:
-                    order_info = {
-                        "token_id": strategy_state.yes_token_id,
-                        "side": side,
-                        "size": signal.yes_size,
-                        "price": signal.yes_price,
-                        "order_type": strategy_state.order_type,
-                    }
-                    if strategy_state.order_expiration:
-                        order_info["expiration"] = strategy_state.order_expiration
-                    orders_to_submit.append(order_info)
-
-            if signal.no_size and signal.no_size >= strategy_state.min_order_amount:
-                if signal.no_price is None:
-                    errors.append("NO 订单缺少价格")
-                else:
-                    order_info = {
-                        "token_id": strategy_state.no_token_id,
-                        "side": side,
-                        "size": signal.no_size,
-                        "price": signal.no_price,
-                        "order_type": strategy_state.order_type,
-                    }
-                    if strategy_state.order_expiration:
-                        order_info["expiration"] = strategy_state.order_expiration
-                    orders_to_submit.append(order_info)
-
-            if errors:
-                execution_data = {
-                    "status": "FAILED",
-                    "mode": strategy_state.execution_mode,
-                    "error": "; ".join(errors),
-                    "orders": orders_to_submit,
-                }
-            elif not orders_to_submit:
-                execution_data = {
-                    "status": "SKIPPED",
-                    "mode": strategy_state.execution_mode,
-                    "reason": "订单数量不足",
-                }
-            elif strategy_state.execution_mode == "SIMULATION":
-                orders_placed: list[dict[str, Any]] = []
-                for order in orders_to_submit:
-                    orders_placed.append({**order, "status": "SIMULATED"})
-                    token_side = "YES" if order["token_id"] == strategy_state.yes_token_id else "NO"
-                    strategy_state.position.update_position(
-                        token_side,
-                        float(order["size"]),
-                        float(order["price"]),
-                        is_buy=(side == "BUY"),
-                    )
-                strategy_state.last_trade_ts = now_ts
-                logger.info("[模拟] 批量 {} 下单: count={}", side, len(orders_placed))
-                execution_data = {
-                    "status": "SIMULATED",
-                    "mode": "SIMULATION",
-                    "orders": orders_placed,
-                }
-            else:
-                try:
-                    result = await create_polymarket_orders_batch(
-                        orders=orders_to_submit,
-                        private_key=strategy_state.private_key,
-                        proxy_address=strategy_state.proxy_address,
-                    )
-                    orders_placed: list[dict[str, Any]] = []
-                    for order in orders_to_submit:
-                        orders_placed.append({**order, "result": result, "status": "SUBMITTED"})
-                        token_side = (
-                            "YES" if order["token_id"] == strategy_state.yes_token_id else "NO"
-                        )
-                        strategy_state.position.update_position(
-                            token_side,
-                            float(order["size"]),
-                            float(order["price"]),
-                            is_buy=(side == "BUY"),
-                        )
-                    strategy_state.last_trade_ts = now_ts
-                    logger.info(
-                        "批量 {} 订单已提交: count={}, result={}",
-                        side,
-                        len(orders_to_submit),
-                        result,
-                    )
-                    execution_data = {
-                        "status": "SUBMITTED",
-                        "mode": "REAL",
-                        "orders": orders_placed,
-                        "result": result,
-                    }
-                except Exception as exc:
-                    logger.error("批量 {} 订单失败: {}", side, exc)
-                    orders_failed = [
-                        {**order, "error": str(exc), "status": "FAILED"}
-                        for order in orders_to_submit
-                    ]
-                    execution_data = {
-                        "status": "FAILED",
-                        "mode": "REAL",
-                        "orders": orders_failed,
-                        "error": str(exc),
-                    }
-
+    # 仅生成信号，不执行下单
     return StrategySignalEvent.create(
         signal_type=signal.signal_type.value,
         reason=signal.reason,
         market=market_data,
         position=position_data,
-        execution=execution_data,
+        execution=None,
         strategy_id=strategy_state.strategy_id,
         yes_size=signal.yes_size,
         no_size=signal.no_size,
