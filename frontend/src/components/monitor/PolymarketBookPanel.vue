@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useAuthStore, useGameStore, useToastStore } from '@/stores'
-import StrategySignalPanel from './StrategySignalPanel.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -57,39 +56,6 @@ const positionSides = ref<
   }>
 >([])
 const positionsLoading = ref(false)
-
-// 格式化信号数据
-function formatSignal(sig: typeof gameStore.latestStrategySignal.value) {
-  if (!sig) return null
-  return {
-    event_type: 'signal' as const,
-    timestamp: sig.timestamp ? new Date(sig.timestamp).getTime() : Date.now(),
-    signal: sig.signal,
-    market: sig.market,
-    position: sig.position,
-    execution: sig.execution,
-    strategy: sig.strategy,
-    error: null,
-  }
-}
-
-// 策略信号（从 store 获取）
-// latestStrategySignal: 最新信号（包括 HOLD，用于显示）
-// strategySignals: 历史信号（只有 BUY/SELL）
-const strategySignals = computed(() => {
-  const latest = formatSignal(gameStore.latestStrategySignal)
-  const history = gameStore.strategySignals.map(formatSignal).filter(Boolean)
-
-  // 如果最新信号存在，放在第一位；历史信号跟在后面（去重）
-  if (latest) {
-    // 避免重复：如果最新信号已经在历史中（BUY/SELL），不重复添加
-    const latestTimestamp = latest.timestamp
-    const filteredHistory = history.filter(h => h && h.timestamp !== latestTimestamp)
-    return [latest, ...filteredHistory] as NonNullable<ReturnType<typeof formatSignal>>[]
-  }
-
-  return history as NonNullable<ReturnType<typeof formatSignal>>[]
-})
 
 const positionSizeByOutcome = computed(() => {
   const map: Record<string, number> = {}
@@ -630,13 +596,6 @@ watch(
           </div>
         </div>
       </div>
-
-      <!-- 策略信号面板 -->
-      <StrategySignalPanel
-        :signals="strategySignals"
-        strategy-id="merge_long"
-        class="mt-4"
-      />
 
     </div>
   </div>

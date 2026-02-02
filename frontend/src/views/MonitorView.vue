@@ -3,8 +3,8 @@ import { useConnectionStore, useGameStore } from '@/stores'
 import ScoreBoard from '@/components/monitor/ScoreBoard.vue'
 import BoxScore from '@/components/monitor/BoxScore.vue'
 import PlayerStatsTable from '@/components/monitor/PlayerStatsTable.vue'
-import PlayByPlay from '@/components/monitor/PlayByPlay.vue'
-import AgentAnalysisPanel from '@/components/monitor/AgentAnalysisPanel.vue'
+import PlayByPlayMarquee from '@/components/monitor/PlayByPlayMarquee.vue'
+import StrategySidebar from '@/components/monitor/StrategySidebar.vue'
 import PolymarketBookPanel from '@/components/monitor/PolymarketBookPanel.vue'
 
 const connectionStore = useConnectionStore()
@@ -16,23 +16,26 @@ const gameStore = useGameStore()
     <!-- 数据展示区域 -->
     <div
       v-if="connectionStore.isConnected || gameStore.scoreboard || gameStore.boxscore"
-      class="grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)_420px] gap-4 lg:gap-6 items-start"
+      class="grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)] xl:grid-cols-[340px_minmax(0,1fr)_400px] gap-4 lg:gap-6 items-start"
     >
-      <!-- Agent 分析左侧边栏 -->
+      <!-- 左侧策略边栏 -->
       <div class="lg:sticky lg:top-20 lg:h-[calc(100vh-10rem)] lg:overflow-hidden">
-        <AgentAnalysisPanel class="h-full" />
+        <StrategySidebar class="h-full" />
       </div>
 
       <!-- 中间主内容区 -->
-      <div class="space-y-6 min-w-0">
+      <div class="space-y-4 min-w-0">
         <!-- 比分板 -->
         <ScoreBoard />
+
+        <!-- 逐回合跑马灯 -->
+        <PlayByPlayMarquee />
 
         <!-- 球队统计 -->
         <BoxScore />
 
         <!-- 球员统计 -->
-        <div v-if="gameStore.boxscore" class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div v-if="gameStore.boxscore" class="grid grid-cols-1 xl:grid-cols-2 gap-4">
           <PlayerStatsTable
             :title="`${gameStore.awayTeam?.name ?? '客队'} 球员统计`"
             :players="gameStore.awayPlayers"
@@ -42,9 +45,6 @@ const gameStore = useGameStore()
             :players="gameStore.homePlayers"
           />
         </div>
-
-        <!-- 逐回合 -->
-        <PlayByPlay />
       </div>
 
       <!-- Polymarket 右侧边栏 -->
