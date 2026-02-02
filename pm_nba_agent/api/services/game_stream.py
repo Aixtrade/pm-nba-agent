@@ -802,7 +802,11 @@ def _build_polymarket_events(
                 }
                 events.append(PolymarketBookEvent.create(price_payload).to_sse())
 
+            # price_change 事件也执行策略
             if events:
+                signal_event = _execute_strategy(message, strategy_state, snapshot=snapshot)
+                if signal_event:
+                    events.append(signal_event)
                 return events
 
     events = [PolymarketBookEvent.create(payload).to_sse()]
