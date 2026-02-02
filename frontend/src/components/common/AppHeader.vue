@@ -2,15 +2,19 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSSE } from '@/composables/useSSE'
-import { useAuthStore, useConnectionStore } from '@/stores'
+import { useAuthStore, useConnectionStore, useTaskStore } from '@/stores'
 import type { LiveStreamRequest } from '@/types/sse'
+import type { CreateTaskRequest } from '@/types/task'
 import StreamConfig from '@/components/monitor/StreamConfig.vue'
+import TaskListPanel from '@/components/monitor/TaskListPanel.vue'
 import ConnectionStatus from './ConnectionStatus.vue'
 
 const router = useRouter()
-const { connect, disconnect, reconnect } = useSSE()
+const { connect, disconnect, reconnect, subscribeTask, createAndSubscribe } = useSSE()
 const connectionStore = useConnectionStore()
+const taskStore = useTaskStore()
 const isConfigOpen = ref(false)
+const isTaskListOpen = ref(false)
 const isPolymarketConfigOpen = ref(false)
 const authStore = useAuthStore()
 const polymarketPrivateKey = ref('')
@@ -18,6 +22,12 @@ const polymarketProxyAddress = ref('')
 
 const POLYMARKET_PRIVATE_KEY = 'POLYMARKET_PRIVATE_KEY'
 const POLYMARKET_PROXY_ADDRESS = 'POLYMARKET_PROXY_ADDRESS'
+
+type CreateTaskCallbacks = {
+  onSuccess?: () => void
+  onError?: (message: string) => void
+  onFinally?: () => void
+}
 
 function handleConnect(request: LiveStreamRequest) {
   connect(request)
@@ -30,6 +40,27 @@ function handleDisconnect() {
 
 function handleReconnect() {
   reconnect()
+}
+
+function handleSubscribeTask(taskId: string) {
+  subscribeTask(taskId)
+  isTaskListOpen.value = false
+}
+
+async function handleCreateAndSubscribe(
+  request: CreateTaskRequest,
+  callbacks?: CreateTaskCallbacks,
+) {
+  try {
+    await createAndSubscribe(request)
+    callbacks?.onSuccess?.()
+    isTaskListOpen.value = false
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '创建任务失败'
+    callbacks?.onError?.(message)
+  } finally {
+    callbacks?.onFinally?.()
+  }
 }
 
 function handleLogout() {
@@ -97,7 +128,18 @@ function clearPolymarketConfig() {
           class="btn btn-outline btn-sm"
           @click="isConfigOpen = true"
         >
-          比赛列表
+          直连模式
+        </button>
+        <button
+          v-if="authStore.isAuthenticated"
+          class="btn btn-outline btn-sm"
+          :class="{ 'btn-primary': taskStore.hasActiveTasks }"
+          @click="isTaskListOpen = true"
+        >
+          后台任务
+          <span v-if="taskStore.activeTasks.length" class="badge badge-sm">
+            {{ taskStore.activeTasks.length }}
+          </span>
         </button>
         <button
           v-if="authStore.isAuthenticated"
@@ -138,6 +180,25 @@ function clearPolymarketConfig() {
       />
     </div>
     <form method="dialog" class="modal-backdrop" @click="isConfigOpen = false">
+      <button>close</button>
+    </form>
+  </dialog>
+
+  <dialog class="modal" :open="isTaskListOpen" @close="isTaskListOpen = false">
+    <div class="modal-box p-0 relative max-w-xl">
+      <button
+        class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2 z-10"
+        @click="isTaskListOpen = false"
+      >
+        ✕
+      </button>
+      <TaskListPanel
+        @subscribe="handleSubscribeTask"
+        @create-and-subscribe="handleCreateAndSubscribe"
+        @disconnect="handleDisconnect"
+      />
+    </div>
+    <form method="dialog" class="modal-backdrop" @click="isTaskListOpen = false">
       <button>close</button>
     </form>
   </dialog>

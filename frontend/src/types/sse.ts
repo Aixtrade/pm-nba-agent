@@ -175,12 +175,16 @@ export type SSEEventType =
   | 'scoreboard'
   | 'boxscore'
   | 'analysis_chunk'
+  | 'playbyplay'
   | 'heartbeat'
   | 'polymarket_info'
   | 'polymarket_book'
   | 'strategy_signal'
   | 'error'
   | 'game_end'
+  | 'task_status'
+  | 'task_end'
+  | 'subscribed'
 
 // SSE 事件处理器
 export interface SSEEventHandlers {
