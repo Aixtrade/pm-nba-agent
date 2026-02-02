@@ -18,7 +18,7 @@ from .models import (
     OrderLevel,
     SignalEvent,
 )
-from .orders import create_polymarket_order
+from .orders import create_polymarket_orders_batch
 from .positions import get_current_positions
 from .strategies import StrategyRegistry, TradingSignal, SignalType
 
@@ -406,6 +406,7 @@ class StrategyExecutor:
     async def _execute_signal(self, signal: TradingSignal) -> ExecutionResult:
         """执行交易信号"""
         orders_placed: list[dict[str, Any]] = []
+        orders_to_submit: list[dict[str, Any]] = []
 
         # 确定交易方向
         side = "BUY" if signal.signal_type == SignalType.BUY else "SELL"
@@ -440,22 +441,7 @@ class StrategyExecutor:
                     "YES", signal.yes_size, signal.yes_price, is_buy=(side == "BUY")
                 )
             else:
-                try:
-                    result = await create_polymarket_order(
-                        token_id=self.yes_token_id,
-                        side=side,
-                        price=signal.yes_price,
-                        size=signal.yes_size,
-                        order_type=self.config.order_type,
-                    )
-                    orders_placed.append({**order_info, "result": result, "status": "SUBMITTED"})
-                    self._position.update_position(
-                        "YES", signal.yes_size, signal.yes_price, is_buy=(side == "BUY")
-                    )
-                    logger.info("YES {} 订单已提交: {}", side, result)
-                except Exception as exc:
-                    logger.error("YES 订单失败: {}", exc)
-                    orders_placed.append({**order_info, "error": str(exc), "status": "FAILED"})
+                orders_to_submit.append(order_info)
 
         # NO 方向订单
         if signal.no_size and signal.no_size >= self.config.min_order_amount:
@@ -487,22 +473,25 @@ class StrategyExecutor:
                     "NO", signal.no_size, signal.no_price, is_buy=(side == "BUY")
                 )
             else:
-                try:
-                    result = await create_polymarket_order(
-                        token_id=self.no_token_id,
-                        side=side,
-                        price=signal.no_price,
-                        size=signal.no_size,
-                        order_type=self.config.order_type,
-                    )
-                    orders_placed.append({**order_info, "result": result, "status": "SUBMITTED"})
+                orders_to_submit.append(order_info)
+
+        if self.config.execution_mode != ExecutionMode.SIMULATION and orders_to_submit:
+            try:
+                result = await create_polymarket_orders_batch(orders=orders_to_submit)
+                for order in orders_to_submit:
+                    orders_placed.append({**order, "result": result, "status": "SUBMITTED"})
+                    token_side = "YES" if order["token_id"] == self.yes_token_id else "NO"
                     self._position.update_position(
-                        "NO", signal.no_size, signal.no_price, is_buy=(side == "BUY")
+                        token_side,
+                        float(order["size"]),
+                        float(order["price"]),
+                        is_buy=(side == "BUY"),
                     )
-                    logger.info("NO {} 订单已提交: {}", side, result)
-                except Exception as exc:
-                    logger.error("NO 订单失败: {}", exc)
-                    orders_placed.append({**order_info, "error": str(exc), "status": "FAILED"})
+                logger.info("批量 {} 订单已提交: count={}, result={}", side, len(orders_to_submit), result)
+            except Exception as exc:
+                logger.error("批量 {} 订单失败: {}", side, exc)
+                for order in orders_to_submit:
+                    orders_placed.append({**order, "error": str(exc), "status": "FAILED"})
 
         success = all(o.get("status") != "FAILED" for o in orders_placed)
         return ExecutionResult(

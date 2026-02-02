@@ -1,5 +1,7 @@
 """API 请求模型"""
 
+from typing import Any
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -45,6 +47,48 @@ class LiveStreamRequest(BaseModel):
         le=120.0,
         description="AI 分析间隔（秒），范围 10-120"
     )
+    strategy_id: str = Field(
+        default="merge_long",
+        description="策略 ID",
+    )
+    strategy_params: dict[str, Any] = Field(
+        default_factory=dict,
+        description="策略参数",
+    )
+    enable_trading: bool = Field(
+        default=False,
+        description="是否启用自动下单",
+    )
+    execution_mode: str = Field(
+        default="SIMULATION",
+        description="执行模式 (SIMULATION/REAL)",
+    )
+    order_type: str = Field(
+        default="GTC",
+        description="订单类型 (GTC/GTD)",
+    )
+    order_expiration: str | None = Field(
+        default=None,
+        description="GTD 到期时间 (毫秒字符串)",
+    )
+    min_order_amount: float = Field(
+        default=1.0,
+        ge=0.0,
+        description="最小下单数量",
+    )
+    trade_cooldown_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="下单冷却时间（秒）",
+    )
+    private_key: str | None = Field(
+        default=None,
+        description="Polymarket 私钥 (可选，若未配置将使用服务端默认)",
+    )
+    proxy_address: str | None = Field(
+        default=None,
+        description="Polymarket 代理地址 (可选，覆盖服务端默认)",
+    )
 
     @field_validator('url')
     @classmethod
@@ -54,6 +98,22 @@ class LiveStreamRequest(BaseModel):
         if 'polymarket.com' not in v.lower():
             raise ValueError('URL 必须是 Polymarket 链接')
         return v
+
+    @field_validator("execution_mode")
+    @classmethod
+    def validate_execution_mode(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if normalized not in {"SIMULATION", "REAL"}:
+            raise ValueError("execution_mode 仅支持 SIMULATION 或 REAL")
+        return normalized
+
+    @field_validator("order_type")
+    @classmethod
+    def validate_order_type(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if normalized not in {"GTC", "GTD"}:
+            raise ValueError("order_type 仅支持 GTC 或 GTD")
+        return normalized
 
 
 class ParsePolymarketRequest(BaseModel):
