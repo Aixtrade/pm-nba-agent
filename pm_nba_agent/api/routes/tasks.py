@@ -48,9 +48,6 @@ class CreateTaskRequest(BaseModel):
     poll_interval: float = Field(default=10.0, ge=5.0, le=60.0)
     include_scoreboard: bool = Field(default=True)
     include_boxscore: bool = Field(default=True)
-    include_playbyplay: bool = Field(default=True)
-    playbyplay_limit: int = Field(default=20, ge=1, le=100)
-    enable_analysis: bool = Field(default=True)
     analysis_interval: float = Field(default=30.0, ge=10.0, le=120.0)
     strategy_id: str = Field(default="merge_long")
     strategy_params: dict[str, Any] = Field(default_factory=dict)
@@ -100,7 +97,7 @@ async def create_task(
 
     创建一个后台任务来监控比赛数据流。任务会持续运行直到比赛结束或被取消。
 
-    **请求体参数与 `/api/v1/live/stream` 相同**
+    **请求体参数与直连模式一致（前端配置）**
 
     **返回**:
     - `task_id`: 任务 ID，用于后续查询和订阅
@@ -118,9 +115,6 @@ async def create_task(
         poll_interval=body.poll_interval,
         include_scoreboard=body.include_scoreboard,
         include_boxscore=body.include_boxscore,
-        include_playbyplay=body.include_playbyplay,
-        playbyplay_limit=body.playbyplay_limit,
-        enable_analysis=body.enable_analysis,
         analysis_interval=body.analysis_interval,
         strategy_id=body.strategy_id,
         strategy_params=body.strategy_params,

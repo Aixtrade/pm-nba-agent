@@ -25,9 +25,6 @@ class TaskConfig:
     poll_interval: float = 10.0
     include_scoreboard: bool = True
     include_boxscore: bool = True
-    include_playbyplay: bool = True
-    playbyplay_limit: int = 20
-    enable_analysis: bool = True
     analysis_interval: float = 30.0
     strategy_id: str = "merge_long"
     strategy_params: dict[str, Any] = field(default_factory=dict)
@@ -56,9 +53,6 @@ class TaskConfig:
             poll_interval=float(data.get("poll_interval", 10.0)),
             include_scoreboard=bool(data.get("include_scoreboard", True)),
             include_boxscore=bool(data.get("include_boxscore", True)),
-            include_playbyplay=bool(data.get("include_playbyplay", True)),
-            playbyplay_limit=int(data.get("playbyplay_limit", 20)),
-            enable_analysis=bool(data.get("enable_analysis", True)),
             analysis_interval=float(data.get("analysis_interval", 30.0)),
             strategy_id=str(data.get("strategy_id", "merge_long")),
             strategy_params=data.get("strategy_params") or {},

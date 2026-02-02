@@ -3,17 +3,16 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSSE } from '@/composables/useSSE'
 import { useAuthStore, useConnectionStore, useTaskStore } from '@/stores'
-import type { LiveStreamRequest } from '@/types/sse'
 import type { CreateTaskRequest } from '@/types/task'
-import StreamConfig from '@/components/monitor/StreamConfig.vue'
+import TaskCreateForm from '@/components/monitor/TaskCreateForm.vue'
 import TaskListPanel from '@/components/monitor/TaskListPanel.vue'
 import ConnectionStatus from './ConnectionStatus.vue'
 
 const router = useRouter()
-const { connect, disconnect, reconnect, subscribeTask, createAndSubscribe } = useSSE()
+const { disconnect, reconnect, subscribeTask, createAndSubscribe } = useSSE()
 const connectionStore = useConnectionStore()
 const taskStore = useTaskStore()
-const isConfigOpen = ref(false)
+const isCreateTaskOpen = ref(false)
 const isTaskListOpen = ref(false)
 const isPolymarketConfigOpen = ref(false)
 const authStore = useAuthStore()
@@ -27,11 +26,6 @@ type CreateTaskCallbacks = {
   onSuccess?: () => void
   onError?: (message: string) => void
   onFinally?: () => void
-}
-
-function handleConnect(request: LiveStreamRequest) {
-  connect(request)
-  isConfigOpen.value = false
 }
 
 function handleDisconnect() {
@@ -54,7 +48,7 @@ async function handleCreateAndSubscribe(
   try {
     await createAndSubscribe(request)
     callbacks?.onSuccess?.()
-    isTaskListOpen.value = false
+    isCreateTaskOpen.value = false
   } catch (error) {
     const message = error instanceof Error ? error.message : '创建任务失败'
     callbacks?.onError?.(message)
@@ -125,10 +119,10 @@ function clearPolymarketConfig() {
       <div class="flex-none flex items-center gap-2">
         <button
           v-if="authStore.isAuthenticated"
-          class="btn btn-outline btn-sm"
-          @click="isConfigOpen = true"
+          class="btn btn-primary btn-sm"
+          @click="isCreateTaskOpen = true"
         >
-          直连模式
+          创建任务
         </button>
         <button
           v-if="authStore.isAuthenticated"
@@ -136,7 +130,7 @@ function clearPolymarketConfig() {
           :class="{ 'btn-primary': taskStore.hasActiveTasks }"
           @click="isTaskListOpen = true"
         >
-          后台任务
+          任务管理
           <span v-if="taskStore.activeTasks.length" class="badge badge-sm">
             {{ taskStore.activeTasks.length }}
           </span>
@@ -166,20 +160,17 @@ function clearPolymarketConfig() {
     </div>
   </header>
 
-  <dialog class="modal" :open="isConfigOpen" @close="isConfigOpen = false">
-    <div class="modal-box p-0 relative">
+  <dialog class="modal" :open="isCreateTaskOpen" @close="isCreateTaskOpen = false">
+    <div class="modal-box p-0 relative max-w-2xl">
       <button
-        class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
-        @click="isConfigOpen = false"
+        class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2 z-10"
+        @click="isCreateTaskOpen = false"
       >
         ✕
       </button>
-      <StreamConfig
-        @connect="handleConnect"
-        @disconnect="handleDisconnect"
-      />
+      <TaskCreateForm @create-and-subscribe="handleCreateAndSubscribe" />
     </div>
-    <form method="dialog" class="modal-backdrop" @click="isConfigOpen = false">
+    <form method="dialog" class="modal-backdrop" @click="isCreateTaskOpen = false">
       <button>close</button>
     </form>
   </dialog>
@@ -194,7 +185,6 @@ function clearPolymarketConfig() {
       </button>
       <TaskListPanel
         @subscribe="handleSubscribeTask"
-        @create-and-subscribe="handleCreateAndSubscribe"
         @disconnect="handleDisconnect"
       />
     </div>

@@ -98,10 +98,9 @@ export function useSSE() {
     console.log('SSE: 网络已恢复')
     toastStore.showInfo('网络已恢复')
 
-    // 如果之前有连接，尝试重连
-    if (sseService.canReconnect()) {
-      console.log('SSE: 网络恢复后自动重连')
-      sseService.reconnect()
+    if (!sseService.isConnected() && taskStore.currentTaskId) {
+      console.log('SSE: 网络恢复后重新订阅任务')
+      void subscribeTask(taskStore.currentTaskId)
     }
   }
 
@@ -117,10 +116,9 @@ export function useSSE() {
     if (document.visibilityState === 'visible') {
       console.log('SSE: 页面可见')
 
-      // 检查连接状态，如果断开且有待恢复的连接，尝试重连
-      if (!sseService.isConnected() && sseService.canReconnect() && isOnline.value) {
-        console.log('SSE: 页面可见后检测到连接断开，尝试重连')
-        sseService.reconnect()
+      if (!sseService.isConnected() && isOnline.value && taskStore.currentTaskId) {
+        console.log('SSE: 页面可见后检测到连接断开，重新订阅任务')
+        void subscribeTask(taskStore.currentTaskId)
       }
     }
   }
@@ -250,8 +248,12 @@ export function useSSE() {
       return
     }
 
-    connectionStore.setStatus('connecting')
-    await sseService.reconnect()
+    if (taskStore.currentTaskId) {
+      await subscribeTask(taskStore.currentTaskId)
+      return
+    }
+
+    toastStore.showWarning('暂无可重连的任务')
   }
 
   // 注册事件监听
@@ -270,7 +272,6 @@ export function useSSE() {
   })
 
   return {
-    connect,
     disconnect,
     reconnect,
     subscribeTask,

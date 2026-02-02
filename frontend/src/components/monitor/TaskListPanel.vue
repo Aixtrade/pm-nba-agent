@@ -2,17 +2,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { useAuthStore, useConnectionStore, useTaskStore, useToastStore } from '@/stores'
 import { taskService } from '@/services/taskService'
-import type { TaskStatus, TaskState, CreateTaskRequest } from '@/types/task'
-
-type CreateTaskCallbacks = {
-  onSuccess?: () => void
-  onError?: (message: string) => void
-  onFinally?: () => void
-}
+import type { TaskStatus, TaskState } from '@/types/task'
 
 const emit = defineEmits<{
   subscribe: [taskId: string]
-  createAndSubscribe: [request: CreateTaskRequest, callbacks?: CreateTaskCallbacks]
   disconnect: []
 }>()
 
@@ -21,21 +14,12 @@ const connectionStore = useConnectionStore()
 const taskStore = useTaskStore()
 const toastStore = useToastStore()
 
-// 表单数据
-const newUrl = ref('')
-const isCreating = ref(false)
-const createError = ref<string | null>(null)
-
 // 刷新状态
 const isRefreshing = ref(false)
 
-const isValidUrl = computed(() => {
-  return newUrl.value.startsWith('http') && newUrl.value.includes('polymarket.com')
-})
-
-const canCreate = computed(() => {
-  return isValidUrl.value && !isCreating.value
-})
+const activeTasks = computed(() =>
+  taskStore.tasks.filter((task) => task.state === 'running' || task.state === 'pending')
+)
 
 // 状态标签样式
 function getStateBadgeClass(state: TaskState): string {
@@ -96,36 +80,6 @@ async function refreshTasks() {
   }
 }
 
-async function handleCreateTask() {
-  if (!canCreate.value) return
-
-  const trimmedUrl = newUrl.value.trim()
-  createError.value = null
-  isCreating.value = true
-
-  try {
-    const request: CreateTaskRequest = {
-      url: trimmedUrl,
-    }
-
-    emit('createAndSubscribe', request, {
-      onSuccess: () => {
-        newUrl.value = ''
-      },
-      onError: (message) => {
-        createError.value = message
-      },
-      onFinally: () => {
-        isCreating.value = false
-      },
-    })
-  } catch (error) {
-    createError.value = error instanceof Error ? error.message : '创建任务失败'
-    toastStore.showError(createError.value)
-    isCreating.value = false
-  }
-}
-
 async function handleSubscribe(task: TaskStatus) {
   if (task.state !== 'running' && task.state !== 'pending') {
     toastStore.showWarning('只能订阅运行中或等待中的任务')
@@ -164,7 +118,7 @@ onMounted(() => {
   <div class="card bg-base-100 shadow-md">
     <div class="card-body">
       <div class="flex items-center justify-between">
-        <h2 class="card-title">后台任务</h2>
+        <h2 class="card-title">任务管理</h2>
         <button
           class="btn btn-ghost btn-sm"
           :class="{ loading: isRefreshing }"
@@ -190,50 +144,12 @@ onMounted(() => {
         </button>
       </div>
 
-      <!-- 创建新任务 -->
-      <div class="space-y-3 mt-4">
-        <div class="grid gap-3 md:grid-cols-[1fr_auto] items-end">
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">创建新任务</span>
-            </label>
-            <input
-              v-model="newUrl"
-              type="url"
-              placeholder="https://polymarket.com/event/nba-xxx-xxx-2026-01-27"
-              class="input input-bordered w-full"
-              :class="{ 'input-error': newUrl && !isValidUrl }"
-            />
-          </div>
-          <div class="form-control">
-            <button
-              class="btn btn-primary"
-              :class="{ loading: isCreating }"
-              :disabled="!canCreate"
-              @click="handleCreateTask"
-            >
-              <span v-if="isCreating">创建中...</span>
-              <span v-else>创建任务</span>
-            </button>
-          </div>
-        </div>
-
-        <label v-if="newUrl && !isValidUrl" class="label pt-0">
-          <span class="label-text-alt text-error"> 请输入有效的 Polymarket URL </span>
-        </label>
-        <label v-else-if="createError" class="label pt-0">
-          <span class="label-text-alt text-error">
-            {{ createError }}
-          </span>
-        </label>
-      </div>
-
       <!-- 任务列表 -->
-      <div class="divider my-2">任务列表</div>
+      <div class="divider my-2">运行中任务</div>
 
-      <div v-if="taskStore.tasks.length" class="space-y-2 max-h-80 overflow-y-auto">
+      <div v-if="activeTasks.length" class="space-y-2 max-h-80 overflow-y-auto">
         <div
-          v-for="task in taskStore.tasks"
+          v-for="task in activeTasks"
           :key="task.task_id"
           class="flex items-start gap-3 p-3 rounded-lg border border-base-200"
           :class="{
@@ -286,7 +202,7 @@ onMounted(() => {
         </div>
       </div>
       <div v-else class="text-sm text-base-content/60 py-4 text-center">
-        暂无后台任务
+        暂无运行中的任务
       </div>
 
       <!-- 断开当前订阅 -->

@@ -27,9 +27,6 @@ export interface CreateTaskRequest {
   poll_interval?: number
   include_scoreboard?: boolean
   include_boxscore?: boolean
-  include_playbyplay?: boolean
-  playbyplay_limit?: number
-  enable_analysis?: boolean
   analysis_interval?: number
   strategy_id?: string
   strategy_params?: Record<string, unknown>
