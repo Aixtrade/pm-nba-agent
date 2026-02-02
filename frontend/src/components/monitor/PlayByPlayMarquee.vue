@@ -4,12 +4,11 @@
  *
  * 在比分板下方显示最新的比赛动作，横向滚动效果
  */
-import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { computed, ref } from 'vue'
 import { useGameStore } from '@/stores'
 
 const gameStore = useGameStore()
 
-const marqueeRef = ref<HTMLElement | null>(null)
 const isPaused = ref(false)
 
 // 获取最新的动作（最多显示 5 条用于滚动）
@@ -41,10 +40,6 @@ function formatAction(action: typeof latestAction.value): string {
   return parts.join(' ')
 }
 
-// 暂停/恢复滚动
-function togglePause() {
-  isPaused.value = !isPaused.value
-}
 </script>
 
 <template>
@@ -66,7 +61,7 @@ function togglePause() {
     </div>
 
     <!-- 跑马灯内容 -->
-    <div class="marquee-content" ref="marqueeRef">
+    <div class="marquee-content">
       <div class="marquee-track" :class="{ paused: isPaused }">
         <span
           v-for="(action, index) in recentActions"

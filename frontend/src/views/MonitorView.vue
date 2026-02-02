@@ -19,7 +19,7 @@ const gameStore = useGameStore()
       class="monitor-layout grid grid-cols-1 lg:grid-cols-[420px_minmax(0,1fr)] xl:grid-cols-[420px_minmax(0,1fr)_400px] gap-4 lg:gap-6 items-start"
     >
       <!-- 左侧策略边栏 -->
-      <div class="lg:sticky lg:top-[var(--sidebar-top)] lg:h-[var(--sidebar-height)] lg:overflow-hidden">
+      <div class="lg:sticky lg:top-(--sidebar-top) lg:h-(--sidebar-height) lg:overflow-hidden">
         <StrategySidebar class="h-full" />
       </div>
 
@@ -48,7 +48,7 @@ const gameStore = useGameStore()
       </div>
 
       <!-- Polymarket 右侧边栏 -->
-      <div class="lg:col-span-2 xl:col-span-1 lg:sticky lg:top-[var(--sidebar-top)] lg:max-h-[var(--sidebar-height)] lg:overflow-y-auto pr-1">
+      <div class="lg:col-span-2 xl:col-span-1 lg:sticky lg:top-(--sidebar-top) lg:max-h-(--sidebar-height) lg:overflow-y-auto pr-1">
         <PolymarketBookPanel :show-position-cost="true" />
       </div>
     </div>

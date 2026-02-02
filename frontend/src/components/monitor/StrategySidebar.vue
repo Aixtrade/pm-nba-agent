@@ -8,13 +8,14 @@
  */
 import { computed } from 'vue'
 import { useGameStore } from '@/stores'
+import type { StrategySignalEventData } from '@/types/sse'
 import StrategySignalPanel from './StrategySignalPanel.vue'
 import AgentAnalysisPanel from './AgentAnalysisPanel.vue'
 
 const gameStore = useGameStore()
 
 // 格式化信号数据
-function formatSignal(sig: typeof gameStore.latestStrategySignal.value) {
+function formatSignal(sig: StrategySignalEventData | null | undefined) {
   if (!sig) return null
   return {
     event_type: 'signal' as const,
