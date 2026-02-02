@@ -115,6 +115,7 @@ export const useGameStore = defineStore('game', () => {
   const polymarketBook = ref<Record<string, BookPriceSnapshot>>({})
   const polymarketBookUpdatedAt = ref<string | null>(null)
   const strategySignals = ref<StrategySignalEventData[]>([])
+  const latestStrategySignal = ref<StrategySignalEventData | null>(null)
   const MAX_STRATEGY_SIGNALS = 20
 
   // 计算属性
@@ -274,11 +275,19 @@ export const useGameStore = defineStore('game', () => {
   }
 
   function addStrategySignal(data: StrategySignalEventData) {
-    strategySignals.value = [data, ...strategySignals.value.slice(0, MAX_STRATEGY_SIGNALS - 1)]
+    // 始终更新最新信号（用于显示，包括 HOLD）
+    latestStrategySignal.value = data
+
+    // 只有 BUY/SELL 信号保存到历史列表
+    const signalType = data.signal?.type
+    if (signalType === 'BUY' || signalType === 'SELL') {
+      strategySignals.value = [data, ...strategySignals.value.slice(0, MAX_STRATEGY_SIGNALS - 1)]
+    }
   }
 
   function clearStrategySignals() {
     strategySignals.value = []
+    latestStrategySignal.value = null
   }
 
   function reset() {
@@ -291,6 +300,7 @@ export const useGameStore = defineStore('game', () => {
     polymarketBook.value = {}
     polymarketBookUpdatedAt.value = null
     strategySignals.value = []
+    latestStrategySignal.value = null
   }
 
   return {
@@ -304,6 +314,7 @@ export const useGameStore = defineStore('game', () => {
     polymarketBook,
     polymarketBookUpdatedAt,
     strategySignals,
+    latestStrategySignal,
     // 计算属性
     gameId,
     gameStatus,

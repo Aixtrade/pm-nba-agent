@@ -146,7 +146,7 @@ class MergeLongStrategy(BaseStrategy):
         if long_cost > threshold + epsilon:
             return TradingSignal(
                 signal_type=SignalType.HOLD,
-                reason=f"成本 {long_cost:.4f} > 阈值 {threshold:.4f}",
+                reason=f"成本 {long_cost:.2f} > 阈值 {threshold:.2f}",
                 metadata=base_metadata,
             )
 
@@ -154,7 +154,7 @@ class MergeLongStrategy(BaseStrategy):
         if long_cost <= 0:
             return TradingSignal(
                 signal_type=SignalType.HOLD,
-                reason=f"无效成本: {long_cost:.4f}",
+                reason=f"无效成本: {long_cost:.2f}",
                 metadata=base_metadata,
             )
 
@@ -163,7 +163,7 @@ class MergeLongStrategy(BaseStrategy):
         if size <= 0:
             return TradingSignal(
                 signal_type=SignalType.HOLD,
-                reason=f"计算数量无效: {size:.4f}",
+                reason=f"计算数量无效: {size:.2f}",
                 metadata=base_metadata,
             )
 
@@ -186,7 +186,7 @@ class MergeLongStrategy(BaseStrategy):
             no_size=size,
             yes_price=effective_buy_yes,
             no_price=effective_buy_no,
-            reason=f"套利: 成本 {long_cost:.4f} <= 阈值 {threshold:.4f}，预期利润 {expected_profit_pct:.2f}%",
+            reason=f"套利: 成本 {long_cost:.2f} <= 阈值 {threshold:.2f}，预期利润 {expected_profit_pct:.2f}%",
             metadata={
                 **base_metadata,
                 "total_budget": total_budget,

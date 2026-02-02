@@ -852,10 +852,6 @@ def _execute_strategy(
     if signal is None:
         return None
 
-    # 只推送有效信号（BUY/SELL），不推送 HOLD
-    if signal.signal_type == SignalType.HOLD:
-        return None
-
     # 构建市场数据
     market_data = {
         "yes_price": snapshot.yes_data.price,

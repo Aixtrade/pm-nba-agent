@@ -123,6 +123,8 @@ class StrategyExecutor:
         self._position = PositionContext()
         self._running = False
         self._task: Optional[asyncio.Task[None]] = None
+        self._event_task: Optional[asyncio.Task[None]] = None
+        self._event_queue: asyncio.Queue[SignalEvent] = asyncio.Queue()
 
         # 订单簿缓存
         self._yes_bids: list[OrderLevel] = []
@@ -165,6 +167,7 @@ class StrategyExecutor:
 
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
+        self._event_task = asyncio.create_task(self._event_dispatcher())
         logger.info(
             "执行器已启动: strategy={}, mode={}",
             self.config.strategy_id,
@@ -175,6 +178,8 @@ class StrategyExecutor:
     async def stop(self) -> None:
         """停止执行器"""
         self._running = False
+
+        # 停止主循环任务
         if self._task:
             self._task.cancel()
             try:
@@ -182,6 +187,22 @@ class StrategyExecutor:
             except asyncio.CancelledError:
                 pass
             self._task = None
+
+        # 停止事件分发任务
+        if self._event_task:
+            self._event_task.cancel()
+            try:
+                await self._event_task
+            except asyncio.CancelledError:
+                pass
+            self._event_task = None
+
+        # 清空事件队列
+        while not self._event_queue.empty():
+            try:
+                self._event_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
         await self._book_stream.close()
         logger.info("执行器已停止")
@@ -203,6 +224,26 @@ class StrategyExecutor:
                 )
         except Exception as exc:
             logger.warning("持仓同步失败: {}", exc)
+
+    async def _event_dispatcher(self) -> None:
+        """事件分发任务：从队列取出事件并推送给回调"""
+        while self._running:
+            try:
+                event = await asyncio.wait_for(
+                    self._event_queue.get(),
+                    timeout=1.0,
+                )
+                if self.on_event:
+                    try:
+                        self.on_event(event)
+                    except Exception as exc:
+                        logger.warning("事件回调失败: {}", exc)
+            except asyncio.TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.error("事件分发失败: {}", exc)
 
     async def _run_loop(self) -> None:
         """主循环：处理订单簿消息"""
@@ -257,13 +298,12 @@ class StrategyExecutor:
                 except Exception as exc:
                     logger.warning("on_signal 回调失败: {}", exc)
 
-            # 新事件推送
-            if self.on_event:
-                try:
-                    event = self._build_signal_event(result, snapshot)
-                    self.on_event(event)
-                except Exception as exc:
-                    logger.warning("on_event 回调失败: {}", exc)
+            # 新事件推送（通过队列异步分发）
+            try:
+                event = self._build_signal_event(result, snapshot)
+                self._enqueue_event(event)
+            except Exception as exc:
+                logger.warning("事件入队失败: {}", exc)
 
     def _update_order_book(self, message: dict[str, Any]) -> None:
         """更新订单簿缓存"""
@@ -497,13 +537,16 @@ class StrategyExecutor:
             metadata=signal.metadata,
         )
 
+    def _enqueue_event(self, event: SignalEvent) -> None:
+        """将事件放入队列（非阻塞）"""
+        try:
+            self._event_queue.put_nowait(event)
+        except asyncio.QueueFull:
+            logger.warning("事件队列已满，丢弃事件: {}", event.event_type)
+
     def emit_event(self, event: SignalEvent) -> None:
-        """手动发送事件"""
-        if self.on_event:
-            try:
-                self.on_event(event)
-            except Exception as exc:
-                logger.warning("emit_event 失败: {}", exc)
+        """手动发送事件（通过队列异步分发）"""
+        self._enqueue_event(event)
 
     def emit_status(self, message: str, data: Optional[dict[str, Any]] = None) -> None:
         """发送状态事件"""
