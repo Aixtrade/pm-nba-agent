@@ -117,8 +117,8 @@ watch(
 </script>
 
 <template>
-  <div class="card glass-card h-full">
-    <div class="card-body flex min-h-0 flex-col">
+  <div class="card glass-card h-full flex flex-col">
+    <div class="card-body flex-1 min-h-0 flex flex-col">
       <div class="flex items-start justify-between gap-4">
         <div class="flex flex-wrap items-center gap-2">
           <h3 class="card-title">Agent 分析</h3>

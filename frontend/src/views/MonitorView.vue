@@ -16,10 +16,10 @@ const gameStore = useGameStore()
     <!-- 数据展示区域 -->
     <div
       v-if="connectionStore.isConnected || gameStore.scoreboard || gameStore.boxscore"
-      class="grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)] xl:grid-cols-[340px_minmax(0,1fr)_400px] gap-4 lg:gap-6 items-start"
+      class="monitor-layout grid grid-cols-1 lg:grid-cols-[420px_minmax(0,1fr)] xl:grid-cols-[420px_minmax(0,1fr)_400px] gap-4 lg:gap-6 items-start"
     >
       <!-- 左侧策略边栏 -->
-      <div class="lg:sticky lg:top-20 lg:h-[calc(100vh-10rem)] lg:overflow-hidden">
+      <div class="lg:sticky lg:top-[var(--sidebar-top)] lg:h-[var(--sidebar-height)] lg:overflow-hidden">
         <StrategySidebar class="h-full" />
       </div>
 
@@ -48,10 +48,8 @@ const gameStore = useGameStore()
       </div>
 
       <!-- Polymarket 右侧边栏 -->
-      <div class="lg:col-span-2 xl:col-span-1 lg:sticky lg:top-20 lg:h-[calc(100vh-10rem)] lg:overflow-hidden">
-        <div class="h-full overflow-y-auto pr-1">
-          <PolymarketBookPanel :show-position-cost="true" />
-        </div>
+      <div class="lg:col-span-2 xl:col-span-1 lg:sticky lg:top-[var(--sidebar-top)] lg:max-h-[var(--sidebar-height)] lg:overflow-y-auto pr-1">
+        <PolymarketBookPanel :show-position-cost="true" />
       </div>
     </div>
 
@@ -98,5 +96,12 @@ const gameStore = useGameStore()
 .empty-card__subtitle {
   max-width: 520px;
   color: rgba(15, 23, 42, 0.48);
+}
+
+.monitor-layout {
+  --app-header-h: 4rem;
+  --app-main-pad-y: 1.5rem;
+  --sidebar-top: calc(var(--app-header-h) + var(--app-main-pad-y));
+  --sidebar-height: calc(100dvh - var(--app-header-h) - (var(--app-main-pad-y) * 2));
 }
 </style>
