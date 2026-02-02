@@ -5,6 +5,7 @@ import BoxScore from '@/components/monitor/BoxScore.vue'
 import PlayerStatsTable from '@/components/monitor/PlayerStatsTable.vue'
 import StrategySidebar from '@/components/monitor/StrategySidebar.vue'
 import PolymarketBookPanel from '@/components/monitor/PolymarketBookPanel.vue'
+import AutoBuyPanel from '@/components/monitor/AutoBuyPanel.vue'
 
 const connectionStore = useConnectionStore()
 const gameStore = useGameStore()
@@ -41,6 +42,9 @@ const gameStore = useGameStore()
             :players="gameStore.homePlayers"
           />
         </div>
+
+        <!-- 自动买入面板 -->
+        <AutoBuyPanel />
       </div>
 
       <!-- Polymarket 右侧边栏 -->
