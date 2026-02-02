@@ -42,8 +42,6 @@ const isAdding = ref(false)
 const pollInterval = ref(10)
 const includeScoreboard = ref(true)
 const includeBoxscore = ref(true)
-const includePlaybyplay = ref(true)
-const playbyplayLimit = ref(20)
 const analysisInterval = ref(30)
 
 // 是否显示高级选项
@@ -201,8 +199,6 @@ function handleConnect() {
     poll_interval: pollInterval.value,
     include_scoreboard: includeScoreboard.value,
     include_boxscore: includeBoxscore.value,
-    include_playbyplay: includePlaybyplay.value,
-    playbyplay_limit: playbyplayLimit.value,
     analysis_interval: analysisInterval.value,
   })
 }
@@ -377,30 +373,6 @@ onMounted(() => {
             />
             <span class="label-text">详细统计</span>
           </label>
-          <label class="label cursor-pointer gap-2">
-            <input
-              v-model="includePlaybyplay"
-              type="checkbox"
-              class="checkbox checkbox-sm"
-              :disabled="connectionStore.isConnected"
-            />
-            <span class="label-text">逐回合</span>
-          </label>
-        </div>
-
-        <div v-if="includePlaybyplay" class="form-control">
-          <label class="label">
-            <span class="label-text">首次逐回合条数</span>
-            <span class="label-text-alt">{{ playbyplayLimit }}</span>
-          </label>
-          <input
-            v-model.number="playbyplayLimit"
-            type="range"
-            min="1"
-            max="100"
-            class="range range-sm"
-            :disabled="connectionStore.isConnected"
-          />
         </div>
       </div>
 

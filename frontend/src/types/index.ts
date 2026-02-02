@@ -68,17 +68,3 @@ export interface GameData {
   }
   players: PlayerData[]
 }
-
-// 回合动作
-export interface PlayAction {
-  actionNumber: number
-  clock: string
-  period: number
-  teamTricode: string
-  personId: number
-  playerNameI: string
-  description: string
-  scoreHome: string
-  scoreAway: string
-  actionType: string
-}

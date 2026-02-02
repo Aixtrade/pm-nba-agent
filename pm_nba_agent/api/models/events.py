@@ -57,19 +57,6 @@ class BoxscoreEvent(SSEEvent):
 
 
 @dataclass
-class PlayByPlayEvent(SSEEvent):
-    """逐回合事件"""
-    event_type: str = field(default="playbyplay", init=False)
-
-    @classmethod
-    def create(cls, game_id: str, actions: list[dict]) -> "PlayByPlayEvent":
-        return cls(data={
-            "game_id": game_id,
-            "actions": actions,
-        })
-
-
-@dataclass
 class HeartbeatEvent(SSEEvent):
     """心跳事件"""
     event_type: str = field(default="heartbeat", init=False)

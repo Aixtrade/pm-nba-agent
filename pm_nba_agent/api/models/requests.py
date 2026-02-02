@@ -27,7 +27,7 @@ class LiveStreamRequest(BaseModel):
     )
     include_playbyplay: bool = Field(
         default=True,
-        description="是否包含逐回合数据"
+        description="是否获取逐回合数据（仅用于分析上下文）"
     )
     playbyplay_limit: int = Field(
         default=20,

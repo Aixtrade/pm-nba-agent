@@ -3,7 +3,6 @@ import { useConnectionStore, useGameStore } from '@/stores'
 import ScoreBoard from '@/components/monitor/ScoreBoard.vue'
 import BoxScore from '@/components/monitor/BoxScore.vue'
 import PlayerStatsTable from '@/components/monitor/PlayerStatsTable.vue'
-import PlayByPlayMarquee from '@/components/monitor/PlayByPlayMarquee.vue'
 import StrategySidebar from '@/components/monitor/StrategySidebar.vue'
 import PolymarketBookPanel from '@/components/monitor/PolymarketBookPanel.vue'
 
@@ -27,9 +26,6 @@ const gameStore = useGameStore()
       <div class="space-y-4 min-w-0">
         <!-- 比分板 -->
         <ScoreBoard />
-
-        <!-- 逐回合跑马灯 -->
-        <PlayByPlayMarquee />
 
         <!-- 球队统计 -->
         <BoxScore />
@@ -65,7 +61,7 @@ const gameStore = useGameStore()
         <h2 class="text-xl font-semibold empty-card__title">NBA 实时监控</h2>
         <p class="empty-card__subtitle">
           在比赛列表中添加 Polymarket 比赛 URL，开始实时监控 NBA 比赛数据。
-          系统将自动获取比分、球队统计、球员数据和逐回合信息。
+          系统将自动获取比分、球队统计和球员数据。
         </p>
       </div>
     </div>

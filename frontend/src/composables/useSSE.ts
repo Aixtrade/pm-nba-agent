@@ -40,9 +40,6 @@ export function useSSE() {
     onBoxscore: (data) => {
       gameStore.setBoxscore(data)
     },
-    onPlayByPlay: (data) => {
-      gameStore.setPlayByPlay(data)
-    },
     onAnalysisChunk: (data) => {
       gameStore.appendAnalysisChunk(data)
     },

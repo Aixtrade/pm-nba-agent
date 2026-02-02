@@ -44,7 +44,7 @@ async def stream_game_data(
     - `poll_interval`: 轮询间隔（5-60秒，默认10秒）
     - `include_scoreboard`: 是否包含比分板（默认 true）
     - `include_boxscore`: 是否包含详细统计（默认 true）
-    - `include_playbyplay`: 是否包含逐回合（默认 true）
+    - `include_playbyplay`: 是否获取逐回合（仅用于分析上下文，默认 true）
     - `playbyplay_limit`: 首次逐回合数据条数（1-100，默认20）
     - `enable_analysis`: 是否启用 AI 分析（默认 true）
     - `analysis_interval`: AI 分析间隔（10-120秒，默认30秒）
@@ -54,7 +54,6 @@ async def stream_game_data(
     - `polymarket_book`: Polymarket 订单簿消息
     - `scoreboard`: 比分板数据
     - `boxscore`: 详细统计数据
-    - `playbyplay`: 逐回合数据（增量推送）
     - `analysis_chunk`: AI 分析流式输出
     - `heartbeat`: 心跳保活
     - `error`: 错误事件

@@ -89,8 +89,6 @@ export class SSEService {
           poll_interval: this.lastRequest.poll_interval ?? 10,
           include_scoreboard: this.lastRequest.include_scoreboard ?? true,
           include_boxscore: this.lastRequest.include_boxscore ?? true,
-          include_playbyplay: this.lastRequest.include_playbyplay ?? true,
-          playbyplay_limit: this.lastRequest.playbyplay_limit ?? 20,
           analysis_interval: this.lastRequest.analysis_interval ?? 30,
         }),
         signal: this.abortController.signal,
@@ -240,11 +238,10 @@ export class SSEService {
         case 'boxscore':
           this.handlers.onBoxscore?.(parsed)
           break
-        case 'playbyplay':
-          this.handlers.onPlayByPlay?.(parsed)
-          break
         case 'analysis_chunk':
           this.handlers.onAnalysisChunk?.(parsed)
+          break
+        case 'playbyplay':
           break
         case 'heartbeat':
           this.handlers.onHeartbeat?.(parsed)

@@ -59,7 +59,7 @@ class MergeLongStrategy(BaseStrategy):
     """合并做多策略：双边买入成本 < 1.0 时套利"""
 
     DEFAULT_PARAMS = {
-        "min_arbitrage_gap": 0.0,
+        "min_arbitrage_gap": 0.01,
         "total_budget": 10.0,
     }
 
@@ -172,12 +172,8 @@ class MergeLongStrategy(BaseStrategy):
         expected_profit_pct = (1.0 - long_cost) * 100
 
         logger.info(
-            "套利触发: cost=%.4f, threshold=%.4f, size=%.2f, profit=%.2f (%.2f%%)",
-            long_cost,
-            threshold,
-            size,
-            expected_profit,
-            expected_profit_pct,
+            f"套利触发: cost={long_cost:.4f}, threshold={threshold:.4f}, size={size:.2f}, "
+            f"profit={expected_profit:.2f} ({expected_profit_pct:.2f}%)"
         )
 
         return TradingSignal(

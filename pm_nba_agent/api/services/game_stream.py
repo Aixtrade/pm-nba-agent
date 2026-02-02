@@ -11,7 +11,6 @@ from ..models.requests import LiveStreamRequest
 from ..models.events import (
     ScoreboardEvent,
     BoxscoreEvent,
-    PlayByPlayEvent,
     HeartbeatEvent,
     PolymarketInfoEvent,
     PolymarketBookEvent,
@@ -133,7 +132,7 @@ class StrategyState:
 
         if yes_price > 0:
             if self.yes_price and yes_price != self.yes_price:
-                logger.info(
+                logger.debug(
                     "Polymarket 订单簿价格更新: YES {} {} -> {}",
                     self.yes_token_id,
                     self.yes_price,
@@ -143,7 +142,7 @@ class StrategyState:
 
         if no_price > 0:
             if self.no_price and no_price != self.no_price:
-                logger.info(
+                logger.debug(
                     "Polymarket 订单簿价格更新: NO {} {} -> {}",
                     self.no_token_id,
                     self.no_price,
@@ -589,7 +588,7 @@ class GameStreamService:
                     recoverable=True
                 ).to_sse()
 
-        # 获取逐回合数据（增量）
+        # 获取逐回合数据（增量），仅用于上下文分析，不推送给前端
         if request.include_playbyplay:
             if state.last_action_number == 0:
                 # 首次获取，使用 limit
@@ -614,11 +613,6 @@ class GameStreamService:
 
                     # 更新上下文
                     context.update_playbyplay(actions)
-
-                    yield PlayByPlayEvent.create(
-                        game_id=state.game_id,
-                        actions=actions
-                    ).to_sse()
             else:
                 yield ErrorEvent.create(
                     code="PLAYBYPLAY_ERROR",

@@ -3,7 +3,7 @@
  * 与后端 pm_nba_agent/api/models/ 对应
  */
 
-import type { GameData, PlayAction } from './index'
+import type { GameData } from './index'
 
 // SSE 请求参数
 export interface LiveStreamRequest {
@@ -11,8 +11,6 @@ export interface LiveStreamRequest {
   poll_interval?: number
   include_scoreboard?: boolean
   include_boxscore?: boolean
-  include_playbyplay?: boolean
-  playbyplay_limit?: number
   analysis_interval?: number
 }
 
@@ -37,12 +35,6 @@ export interface ScoreboardEventData {
 
 // Boxscore 事件数据 (完整 GameData)
 export type BoxscoreEventData = GameData
-
-// PlayByPlay 事件数据
-export interface PlayByPlayEventData {
-  game_id: string
-  actions: PlayAction[]
-}
 
 // Heartbeat 事件数据
 export interface HeartbeatEventData {
@@ -172,7 +164,6 @@ export interface StrategySignalEventData {
 export type SSEEventType =
   | 'scoreboard'
   | 'boxscore'
-  | 'playbyplay'
   | 'analysis_chunk'
   | 'heartbeat'
   | 'polymarket_info'
@@ -185,7 +176,6 @@ export type SSEEventType =
 export interface SSEEventHandlers {
   onScoreboard?: (data: ScoreboardEventData) => void
   onBoxscore?: (data: BoxscoreEventData) => void
-  onPlayByPlay?: (data: PlayByPlayEventData) => void
   onAnalysisChunk?: (data: AnalysisChunkEventData) => void
   onHeartbeat?: (data: HeartbeatEventData) => void
   onPolymarketInfo?: (data: PolymarketInfoEventData) => void

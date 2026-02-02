@@ -3,14 +3,12 @@ import { ref, computed } from 'vue'
 import type {
   ScoreboardEventData,
   BoxscoreEventData,
-  PlayByPlayEventData,
   GameEndEventData,
   AnalysisChunkEventData,
   PolymarketInfoEventData,
   PolymarketBookEventData,
   StrategySignalEventData,
 } from '@/types/sse'
-import type { PlayAction } from '@/types'
 
 interface BookLevel {
   price: number
@@ -108,7 +106,6 @@ export const useGameStore = defineStore('game', () => {
   // 状态
   const scoreboard = ref<ScoreboardEventData | null>(null)
   const boxscore = ref<BoxscoreEventData | null>(null)
-  const playByPlayActions = ref<PlayAction[]>([])
   const gameEndData = ref<GameEndEventData | null>(null)
   const analysisChunks = ref<AnalysisChunkEventData[]>([])
   const polymarketInfo = ref<PolymarketInfoEventData | null>(null)
@@ -176,14 +173,6 @@ export const useGameStore = defineStore('game', () => {
     boxscore.value = data
   }
 
-  function setPlayByPlay(data: PlayByPlayEventData) {
-    // 合并新动作，按 actionNumber 去重并排序
-    const existingIds = new Set(playByPlayActions.value.map(a => a.actionNumber))
-    const newActions = data.actions.filter(a => !existingIds.has(a.actionNumber))
-    playByPlayActions.value = [...playByPlayActions.value, ...newActions].sort(
-      (a, b) => b.actionNumber - a.actionNumber
-    )
-  }
 
   function setGameEnd(data: GameEndEventData) {
     gameEndData.value = data
@@ -293,7 +282,6 @@ export const useGameStore = defineStore('game', () => {
   function reset() {
     scoreboard.value = null
     boxscore.value = null
-    playByPlayActions.value = []
     gameEndData.value = null
     analysisChunks.value = []
     polymarketInfo.value = null
@@ -307,7 +295,6 @@ export const useGameStore = defineStore('game', () => {
     // 状态
     scoreboard,
     boxscore,
-    playByPlayActions,
     gameEndData,
     analysisChunks,
     polymarketInfo,
@@ -326,7 +313,6 @@ export const useGameStore = defineStore('game', () => {
     // Actions
     setScoreboard,
     setBoxscore,
-    setPlayByPlay,
     setGameEnd,
     appendAnalysisChunk,
     setPolymarketInfo,
