@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import { useAuthStore, useGameStore, useToastStore } from '@/stores'
 
 const props = withDefaults(
@@ -47,17 +47,10 @@ const buyPriceByToken = reactive<Record<string, string>>({})
 const sellSizeByToken = reactive<Record<string, string>>({})
 const sellPriceByToken = reactive<Record<string, string>>({})
 const submitting = reactive<Record<string, boolean>>({})
-const positionSides = ref<
-  Array<{
-    outcome: string
-    size: number
-    initial_value?: number | null
-    asset?: string | null
-    avg_price?: number | null
-    cur_price?: number | null
-  }>
->([])
-const positionsLoading = ref(false)
+
+// 使用 store 中的持仓数据
+const positionSides = computed(() => gameStore.positionSides)
+const positionsLoading = computed(() => gameStore.positionsLoading)
 
 const positionSizeByOutcome = computed(() => {
   const map: Record<string, number> = {}
@@ -251,7 +244,7 @@ async function fetchMarketPositions(options: {
   const skipImmediate = options.skipImmediate ?? false
   const initialDelayMs = options.initialDelayMs ?? delayMs
 
-  positionsLoading.value = true
+  gameStore.setPositionsLoading(true)
   let lastError: Error | null = null
   const totalAttempts = Math.max(1, retries + 1)
   const startAttempt = skipImmediate ? 1 : 0
@@ -290,7 +283,7 @@ async function fetchMarketPositions(options: {
         const data = await response.json().catch(() => null)
         const sides = Array.isArray(data?.sides) ? data.sides : []
         const unchanged = isSameSides(positionSides.value, sides)
-        positionSides.value = sides
+        gameStore.setPositionSides(sides)
 
         if (attempt < totalAttempts - 1) {
           if (retryAlways && unchanged) {
@@ -313,7 +306,7 @@ async function fetchMarketPositions(options: {
   } catch (error) {
     toastStore.showToast(error instanceof Error ? error.message : '查询持仓失败', 'error')
   } finally {
-    positionsLoading.value = false
+    gameStore.setPositionsLoading(false)
   }
 }
 

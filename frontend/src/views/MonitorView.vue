@@ -6,6 +6,7 @@ import PlayerStatsTable from '@/components/monitor/PlayerStatsTable.vue'
 import StrategySidebar from '@/components/monitor/StrategySidebar.vue'
 import PolymarketBookPanel from '@/components/monitor/PolymarketBookPanel.vue'
 import AutoBuyPanel from '@/components/monitor/AutoBuyPanel.vue'
+import AutoSellPanel from '@/components/monitor/AutoSellPanel.vue'
 
 const connectionStore = useConnectionStore()
 const gameStore = useGameStore()
@@ -45,6 +46,9 @@ const gameStore = useGameStore()
 
         <!-- 自动买入面板 -->
         <AutoBuyPanel />
+
+        <!-- 自动卖出面板 -->
+        <AutoSellPanel />
       </div>
 
       <!-- Polymarket 右侧边栏 -->

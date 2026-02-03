@@ -115,6 +115,19 @@ export const useGameStore = defineStore('game', () => {
   const latestStrategySignal = ref<StrategySignalEventData | null>(null)
   const MAX_STRATEGY_SIGNALS = 20
 
+  // 持仓状态
+  const positionSides = ref<
+    Array<{
+      outcome: string
+      size: number
+      initial_value?: number | null
+      avg_price?: number | null
+      cur_price?: number | null
+    }>
+  >([])
+  const positionsLoading = ref(false)
+  const positionsUpdatedAt = ref<string | null>(null)
+
   // 计算属性
   const gameId = computed(() => scoreboard.value?.game_id ?? boxscore.value?.game_info.game_id ?? null)
 
@@ -279,6 +292,23 @@ export const useGameStore = defineStore('game', () => {
     latestStrategySignal.value = null
   }
 
+  function setPositionSides(
+    sides: Array<{
+      outcome: string
+      size: number
+      initial_value?: number | null
+      avg_price?: number | null
+      cur_price?: number | null
+    }>
+  ) {
+    positionSides.value = sides
+    positionsUpdatedAt.value = new Date().toISOString()
+  }
+
+  function setPositionsLoading(loading: boolean) {
+    positionsLoading.value = loading
+  }
+
   function reset() {
     scoreboard.value = null
     boxscore.value = null
@@ -289,6 +319,9 @@ export const useGameStore = defineStore('game', () => {
     polymarketBookUpdatedAt.value = null
     strategySignals.value = []
     latestStrategySignal.value = null
+    positionSides.value = []
+    positionsLoading.value = false
+    positionsUpdatedAt.value = null
   }
 
   return {
@@ -302,6 +335,9 @@ export const useGameStore = defineStore('game', () => {
     polymarketBookUpdatedAt,
     strategySignals,
     latestStrategySignal,
+    positionSides,
+    positionsLoading,
+    positionsUpdatedAt,
     // 计算属性
     gameId,
     gameStatus,
@@ -320,6 +356,8 @@ export const useGameStore = defineStore('game', () => {
     addStrategySignal,
     clearStrategySignals,
     clearAnalysis,
+    setPositionSides,
+    setPositionsLoading,
     reset,
   }
 })
