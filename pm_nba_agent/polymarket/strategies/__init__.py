@@ -22,6 +22,7 @@ from .registry import StrategyRegistry
 
 # 自动注册内置策略
 from . import merge_long_strategy  # noqa: F401
+from . import locked_profit_strategy  # noqa: F401
 
 __all__ = [
     "BaseStrategy",

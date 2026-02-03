@@ -46,6 +46,20 @@ class LiveStreamRequest(BaseModel):
         description="AI 分析间隔（秒），范围 10-120"
     )
 
+    # 策略相关参数
+    strategy_id: str | None = Field(
+        default=None,
+        description="策略 ID（如 merge_long, locked_profit），默认 merge_long"
+    )
+    strategy_params: dict | None = Field(
+        default=None,
+        description="策略参数，如 {target_profit: 0.0}"
+    )
+    proxy_address: str | None = Field(
+        default=None,
+        description="Polymarket 代理地址（0x 开头），用于获取实时持仓"
+    )
+
     @field_validator('url')
     @classmethod
     def validate_url(cls, v: str) -> str:

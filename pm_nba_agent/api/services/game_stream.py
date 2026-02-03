@@ -1,6 +1,7 @@
 """比赛数据流服务"""
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, AsyncGenerator, Optional
@@ -34,6 +35,7 @@ from ...polymarket.models import (
     PositionContext,
 )
 from ...polymarket.strategies import StrategyRegistry
+from ...polymarket.positions import get_current_positions
 from ...models.game_data import GameData
 
 @dataclass
@@ -51,6 +53,11 @@ class StrategyState:
     no_asks: list[OrderLevel] = None  # type: ignore
     yes_price: float = 0.0
     no_price: float = 0.0
+    # 持仓获取相关
+    proxy_address: str = ""
+    condition_id: str = ""
+    _last_position_fetch: float = 0.0
+    _position_fetch_interval: float = 5.0  # 持仓获取间隔（秒）
 
     def __post_init__(self):
         if self.position is None:
@@ -65,6 +72,44 @@ class StrategyState:
             self.no_bids = []
         if self.no_asks is None:
             self.no_asks = []
+
+    async def refresh_position(self) -> bool:
+        """获取最新持仓（带节流）
+
+        Returns:
+            是否成功获取持仓
+        """
+        now = time.time()
+        if now - self._last_position_fetch < self._position_fetch_interval:
+            return False  # 节流，跳过
+
+        if not self.proxy_address or not self.condition_id:
+            return False  # 缺少必要参数
+
+        try:
+            positions = await get_current_positions(
+                proxy_address=self.proxy_address,
+                condition_ids=[self.condition_id],
+            )
+            if positions is None:
+                return False
+
+            # 更新持仓
+            self.position = PositionContext.from_api_positions(
+                positions,
+                yes_token_id=self.yes_token_id,
+                no_token_id=self.no_token_id,
+            )
+            self._last_position_fetch = now
+            logger.debug(
+                "持仓已更新: YES={:.2f} NO={:.2f}",
+                self.position.yes_size,
+                self.position.no_size,
+            )
+            return True
+        except Exception as exc:
+            logger.warning("获取持仓失败: {}", exc)
+            return False
 
     def update_book(self, message: dict[str, Any]) -> None:
         """更新订单簿缓存"""
@@ -313,6 +358,7 @@ class GameStreamService:
                                 # 初始化策略状态（仅用于信号生成）
                                 strategy_state = _init_strategy_state(
                                     polymarket_event,
+                                    request,
                                 )
                                 if strategy_state:
                                     logger.info(
@@ -687,11 +733,17 @@ def _collect_polymarket_asset_ids(event_info: EventInfo) -> list[str]:
 
 def _init_strategy_state(
     event_info: EventInfo,
-    *,
-    strategy_id: str = "merge_long",
-    strategy_params: Optional[dict[str, Any]] = None,
+    request: LiveStreamRequest,
 ) -> Optional[StrategyState]:
-    """从事件信息初始化策略状态（仅用于信号生成）"""
+    """从事件信息和请求参数初始化策略状态（仅用于信号生成）
+
+    Args:
+        event_info: Polymarket 事件信息（含 condition_id, tokens）
+        request: 请求参数（含 strategy_id, strategy_params, proxy_address）
+
+    Returns:
+        策略状态；初始化失败返回 None
+    """
     tokens = event_info.tokens
     if len(tokens) < 2:
         return None
@@ -716,13 +768,23 @@ def _init_strategy_state(
     if not yes_token_id or not no_token_id:
         return None
 
-    normalized_strategy_id = str(strategy_id or "merge_long").strip() or "merge_long"
+    # 获取请求参数
+    strategy_id = str(request.strategy_id or "merge_long").strip() or "merge_long"
+    strategy_params = request.strategy_params or {}
+    proxy_address = str(request.proxy_address or "").strip()
+    condition_id = event_info.condition_id or ""
+
+    # 如果没有 condition_id，尝试从 market_info 获取
+    if not condition_id and event_info.market_info:
+        condition_id = event_info.market_info.condition_id or ""
 
     return StrategyState(
-        strategy_id=normalized_strategy_id,
+        strategy_id=strategy_id,
         yes_token_id=yes_token_id,
         no_token_id=no_token_id,
-        strategy_params=strategy_params or {},
+        strategy_params=strategy_params,
+        proxy_address=proxy_address,
+        condition_id=condition_id,
     )
 
 
@@ -846,6 +908,9 @@ async def _execute_strategy(
     strategy = StrategyRegistry.get(strategy_state.strategy_id)
     if strategy is None:
         return None
+
+    # 获取最新持仓（如果配置了 proxy_address）
+    await strategy_state.refresh_position()
 
     # 构建上下文
     order_book = OrderBookContext.from_snapshot(snapshot)
