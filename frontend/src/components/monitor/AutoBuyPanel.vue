@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useAuthStore, useGameStore, useToastStore } from '@/stores'
+import type { StrategySignalEventData } from '@/types/sse'
 
 const BOTH_SIDE = '__BOTH__'
 
@@ -37,16 +38,13 @@ function setStoredValue<T>(key: string, value: T) {
 const autoBuyEnabled = ref(false)
 const orderSide = ref<string>(getStoredValue('SIDE', BOTH_SIDE)) // outcome 名称或 BOTH_SIDE
 const orderAmount = ref(getStoredValue('AMOUNT', 10))
-const orderInterval = ref(getStoredValue('INTERVAL', 30))
 
 // 运行状态
 const lastOrderTime = ref<Date | null>(null)
+const lastSignalTimestamp = ref<number | null>(null) // 用于去重
 // 使用 outcome 名称作为 key 的统计
 const orderStats = reactive<Record<string, { count: number; amount: number }>>({})
 const isOrdering = ref(false)
-const cooldownRemaining = ref(0)
-const autoTimer = ref<number | null>(null)
-const cooldownTimer = ref<number | null>(null)
 
 // 计算属性
 const polymarketInfo = computed(() => gameStore.polymarketInfo)
@@ -74,13 +72,29 @@ watch(availableOutcomes, (outcomes) => {
 const statusText = computed(() => {
   if (!autoBuyEnabled.value) return '已关闭'
   if (isOrdering.value) return '下单中...'
-  return '运行中'
+  return '等待信号'
 })
 
 const statusClass = computed(() => {
   if (!autoBuyEnabled.value) return 'text-base-content/50'
   if (isOrdering.value) return 'text-warning'
   return 'text-success'
+})
+
+// 最新信号显示
+const latestSignalText = computed(() => {
+  const sig = gameStore.latestStrategySignal
+  if (!sig?.signal) return '--'
+  const type = sig.signal.type
+  const labels: Record<string, string> = { BUY: '买入', SELL: '卖出', HOLD: '等待' }
+  return labels[type] ?? '--'
+})
+
+const latestSignalClass = computed(() => {
+  const type = gameStore.latestStrategySignal?.signal?.type
+  if (type === 'BUY') return 'text-success'
+  if (type === 'SELL') return 'text-error'
+  return 'text-base-content/50'
 })
 
 // 获取目标 token
@@ -173,8 +187,27 @@ async function placeSingleOrder(tokenId: string, price: number, size: number): P
   }
 }
 
-// 执行下单
-async function executeOrder() {
+// 监听策略信号
+watch(
+  () => gameStore.latestStrategySignal,
+  (newSignal: StrategySignalEventData | null) => {
+    if (!autoBuyEnabled.value || !newSignal) return
+
+    // 只处理 BUY 信号
+    if (newSignal.signal?.type !== 'BUY') return
+
+    // 用 timestamp 去重，避免重复处理同一信号
+    const signalTs = newSignal.timestamp ? new Date(newSignal.timestamp).getTime() : Date.now()
+    if (lastSignalTimestamp.value === signalTs) return
+    lastSignalTimestamp.value = signalTs
+
+    // 执行信号驱动的下单
+    executeSignalOrder(newSignal)
+  }
+)
+
+// 执行信号驱动的下单（使用原有下单逻辑：金额/bestAsk）
+async function executeSignalOrder(_signalData: StrategySignalEventData) {
   const check = canPlaceOrder()
   if (!check.ok) {
     toastStore.showWarning(`无法下单: ${check.reason}`)
@@ -208,70 +241,16 @@ async function executeOrder() {
 
     if (successCount > 0) {
       lastOrderTime.value = new Date()
-      toastStore.showSuccess(`自动买入成功 (${successCount}笔)`)
+      toastStore.showSuccess(`信号买入成功 (${successCount}笔)`)
     }
   } finally {
     isOrdering.value = false
   }
 }
 
-// 启动倒计时
-function startCooldown() {
-  cooldownRemaining.value = orderInterval.value
-
-  if (cooldownTimer.value) {
-    clearInterval(cooldownTimer.value)
-  }
-
-  cooldownTimer.value = window.setInterval(() => {
-    cooldownRemaining.value--
-    if (cooldownRemaining.value <= 0) {
-      cooldownRemaining.value = orderInterval.value
-    }
-  }, 1000)
-}
-
-// 停止倒计时
-function stopCooldown() {
-  if (cooldownTimer.value) {
-    clearInterval(cooldownTimer.value)
-    cooldownTimer.value = null
-  }
-  cooldownRemaining.value = 0
-}
-
-// 开关变化时启动/停止定时器
-watch(autoBuyEnabled, (enabled) => {
-  if (enabled) {
-    // 立即执行一次
-    executeOrder()
-    // 启动定时器
-    autoTimer.value = window.setInterval(() => {
-      executeOrder()
-    }, orderInterval.value * 1000)
-    // 启动倒计时
-    startCooldown()
-  } else {
-    if (autoTimer.value) {
-      clearInterval(autoTimer.value)
-      autoTimer.value = null
-    }
-    stopCooldown()
-  }
-})
-
 // 配置变化时持久化
 watch(orderSide, (value) => setStoredValue('SIDE', value))
 watch(orderAmount, (value) => setStoredValue('AMOUNT', value))
-watch(orderInterval, (value) => setStoredValue('INTERVAL', value))
-
-// 组件卸载时清理
-onUnmounted(() => {
-  if (autoTimer.value) {
-    clearInterval(autoTimer.value)
-  }
-  stopCooldown()
-})
 
 // 格式化时间
 function formatTime(date: Date | null): string {
@@ -386,21 +365,6 @@ function getSideButtonClass(side: string): string {
           />
           <span class="text-sm text-base-content/60">USDC</span>
         </div>
-
-        <!-- 下单间隔 -->
-        <div class="flex items-center gap-3">
-          <span class="text-sm text-base-content/70 w-16">间隔</span>
-          <input
-            v-model.number="orderInterval"
-            type="number"
-            min="5"
-            max="300"
-            step="5"
-            class="input input-bordered input-sm w-24"
-            :disabled="autoBuyEnabled"
-          />
-          <span class="text-sm text-base-content/60">秒</span>
-        </div>
       </div>
 
       <!-- 状态区域 -->
@@ -412,11 +376,11 @@ function getSideButtonClass(side: string): string {
             <div class="font-medium" :class="statusClass">{{ statusText }}</div>
           </div>
 
-          <!-- 下次下单 -->
+          <!-- 最新信号 -->
           <div>
-            <div class="text-base-content/50">下次下单</div>
-            <div class="font-medium text-base-content">
-              {{ autoBuyEnabled && cooldownRemaining > 0 ? `${cooldownRemaining} 秒后` : '--' }}
+            <div class="text-base-content/50">最新信号</div>
+            <div class="font-medium" :class="latestSignalClass">
+              {{ latestSignalText }}
             </div>
           </div>
 
