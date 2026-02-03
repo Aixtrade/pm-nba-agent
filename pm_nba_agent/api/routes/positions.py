@@ -22,6 +22,8 @@ def _build_position_sides(
     sizes: dict[str, float] = {}
     assets: dict[str, str | None] = {}
     initial_values: dict[str, float] = {}
+    avg_prices: dict[str, float | None] = {}
+    cur_prices: dict[str, float | None] = {}
 
     for position in positions:
         outcome = str(position.get("outcome") or "").strip()
@@ -41,6 +43,22 @@ def _build_position_sides(
             asset = position.get("asset")
             if asset and outcome not in assets:
                 assets[outcome] = str(asset)
+
+            if outcome not in avg_prices:
+                avg_price_value = position.get("avgPrice")
+                if avg_price_value is not None:
+                    try:
+                        avg_prices[outcome] = float(avg_price_value)
+                    except (TypeError, ValueError):
+                        avg_prices[outcome] = None
+
+            if outcome not in cur_prices:
+                cur_price_value = position.get("curPrice")
+                if cur_price_value is not None:
+                    try:
+                        cur_prices[outcome] = float(cur_price_value)
+                    except (TypeError, ValueError):
+                        cur_prices[outcome] = None
 
         opposite_outcome = str(position.get("oppositeOutcome") or "").strip()
         if opposite_outcome and opposite_outcome not in sizes:
@@ -65,6 +83,8 @@ def _build_position_sides(
             size=sizes.get(outcome, 0.0),
             initial_value=initial_values.get(outcome, 0.0),
             asset=assets.get(outcome),
+            avg_price=avg_prices.get(outcome),
+            cur_price=cur_prices.get(outcome),
         )
         for outcome in ordered_outcomes
     ]

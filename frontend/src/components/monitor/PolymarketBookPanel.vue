@@ -53,6 +53,8 @@ const positionSides = ref<
     size: number
     initial_value?: number | null
     asset?: string | null
+    avg_price?: number | null
+    cur_price?: number | null
   }>
 >([])
 const positionsLoading = ref(false)
@@ -96,7 +98,7 @@ function formatSize(value: number | null | undefined): string {
   return value.toFixed(2)
 }
 
-function normalizeSides(sides: Array<{ outcome: string; size: number; initial_value?: number | null }>) {
+function normalizeSides(sides: Array<{ outcome: string; size: number; initial_value?: number | null; avg_price?: number | null; cur_price?: number | null }>) {
   return sides
     .map(side => ({
       outcome: String(side.outcome),
@@ -109,8 +111,8 @@ function normalizeSides(sides: Array<{ outcome: string; size: number; initial_va
 }
 
 function isSameSides(
-  current: Array<{ outcome: string; size: number; initial_value?: number | null }>,
-  next: Array<{ outcome: string; size: number; initial_value?: number | null }>
+  current: Array<{ outcome: string; size: number; initial_value?: number | null; avg_price?: number | null; cur_price?: number | null }>,
+  next: Array<{ outcome: string; size: number; initial_value?: number | null; avg_price?: number | null; cur_price?: number | null }>
 ) {
   const a = normalizeSides(current)
   const b = normalizeSides(next)
@@ -450,12 +452,17 @@ watch(
           :key="side.outcome"
           class="rounded-md bg-base-100/60 px-2 py-2"
         >
-          <div class="text-[11px] text-base-content/60">{{ side.outcome }}</div>
-          <div class="text-sm font-semibold text-base-content">
-            {{ formatSize(side.size) }}
+          <div class="flex items-baseline justify-between">
+            <span class="text-sm font-semibold text-base-content">{{ side.outcome }}</span>
+            <span class="text-sm font-semibold text-base-content">{{ formatSize(side.size) }}</span>
           </div>
-          <div v-if="props.showPositionCost" class="text-[11px] text-base-content/60">
-            成本 {{ formatSize(side.initial_value ?? null) }}
+          <div v-if="props.showPositionCost" class="mt-0.5 flex items-center justify-between text-[10px] text-base-content/50">
+            <span>成本</span>
+            <span class="text-base-content/70">{{ formatSize(side.initial_value ?? null) }}</span>
+          </div>
+          <div class="mt-0.5 flex items-center justify-between text-[10px] text-base-content/50">
+            <span>均价 / 现价</span>
+            <span class="text-base-content/70">{{ side.avg_price != null ? formatPrice(side.avg_price) : '-' }} / {{ side.cur_price != null ? formatPrice(side.cur_price) : '-' }}</span>
           </div>
         </div>
         <div v-if="positionSides.length === 0" class="col-span-2 text-center text-base-content/50">

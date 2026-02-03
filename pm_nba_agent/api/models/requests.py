@@ -246,6 +246,8 @@ class PolymarketPositionSide(BaseModel):
     size: float = Field(..., description="持仓份额")
     initial_value: float = Field(..., description="持仓成本（initialValue 汇总）")
     asset: str | None = Field(default=None, description="Token 资产 ID")
+    avg_price: float | None = Field(default=None, description="平均买入价格")
+    cur_price: float | None = Field(default=None, description="当前市场价格")
 
 
 class PolymarketMarketPositionsResponse(BaseModel):
