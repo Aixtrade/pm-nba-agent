@@ -34,8 +34,10 @@ function setStoredValue<T>(key: string, value: T) {
 const autoSellEnabledMap = reactive<Record<string, boolean>>(getStoredValue('ENABLED_MAP', {})) // 每个 outcome 的开关
 const minProfitRate = ref(getStoredValue('MIN_PROFIT_RATE', 5)) // 最小利润率 %
 const sellRatio = ref(getStoredValue('SELL_RATIO', 100)) // 卖出比例 %
-const refreshInterval = ref(getStoredValue('REFRESH_INTERVAL', 3)) // 刷新间隔（秒）
+const refreshInterval = ref(getStoredValue('REFRESH_INTERVAL', 3)) // 持仓刷新间隔（秒）
 const cooldownTime = ref(getStoredValue('COOLDOWN_TIME', 30)) // 冷却时间（秒）
+
+let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 // 计算是否有任何一个 outcome 开启了自动卖出
 const hasAnyAutoSellEnabled = computed(() => Object.values(autoSellEnabledMap).some(v => v))
@@ -47,10 +49,9 @@ const isOrdering = ref(false)
 const lastSellTime = reactive<Record<string, Date>>({}) // 每个 outcome 的最后卖出时间
 const orderStats = reactive<Record<string, { count: number; amount: number }>>({})
 
-let refreshTimer: ReturnType<typeof setInterval> | null = null
-
 // 计算属性
 const polymarketInfo = computed(() => gameStore.polymarketInfo)
+const polymarketBook = computed(() => gameStore.polymarketBook)
 
 const statusText = computed(() => {
   if (!hasAnyAutoSellEnabled.value) return '已关闭'
@@ -298,16 +299,13 @@ async function executeSell(side: { outcome: string; size: number; avg_price?: nu
   }
 }
 
-// 检查并执行自动卖出
+// 基于收益率变化触发自动卖出（由 watch polymarketBook 触发）
 async function checkAndAutoSell() {
   if (!hasAnyAutoSellEnabled.value || isOrdering.value) return
   if (!authStore.isAuthenticated) return
   if (!getPrivateKey() || !getProxyAddress()) return
 
-  // 先刷新持仓
-  await fetchMarketPositions()
-
-  // 检查每个持仓
+  // 检查每个持仓的收益率
   const sellableSides: typeof positionSides.value = []
   for (const side of positionSides.value) {
     const { canSell, profitRate } = canSellOutcome(side)
@@ -326,7 +324,7 @@ async function checkAndAutoSell() {
       const success = await executeSell(side)
       if (success) {
         successCount++
-        const profitRate = calculateProfitRate(side.avg_price, side.cur_price)
+        const profitRate = calculateProfitRate(side.avg_price, getBestBidByOutcome(side.outcome))
         toastStore.showSuccess(`自动卖出 ${side.outcome} 成功 (+${((profitRate ?? 0) * 100).toFixed(1)}%)`)
       }
     }
@@ -341,15 +339,15 @@ async function checkAndAutoSell() {
   }
 }
 
-// 启动/停止定时器
+// 启动/停止持仓刷新定时器
 function startRefreshTimer() {
   stopRefreshTimer()
   if (hasAnyAutoSellEnabled.value && refreshInterval.value > 0) {
-    // 立即执行一次
-    checkAndAutoSell()
-    // 设置定时器
+    // 立即刷新一次持仓
+    fetchMarketPositions()
+    // 定时刷新持仓数据
     refreshTimer = setInterval(() => {
-      checkAndAutoSell()
+      fetchMarketPositions()
     }, refreshInterval.value * 1000)
   }
 }
@@ -361,7 +359,17 @@ function stopRefreshTimer() {
   }
 }
 
-// 监听开关变化
+// 监控订单簿变化，实时计算收益率，达到阈值立即卖出
+watch(
+  polymarketBook,
+  () => {
+    if (!hasAnyAutoSellEnabled.value) return
+    checkAndAutoSell()
+  },
+  { deep: true }
+)
+
+// 监听开关变化，启动/停止持仓刷新
 watch(hasAnyAutoSellEnabled, (enabled) => {
   if (enabled) {
     startRefreshTimer()
@@ -373,7 +381,7 @@ watch(hasAnyAutoSellEnabled, (enabled) => {
 // 持久化 autoSellEnabledMap
 watch(autoSellEnabledMap, (value) => setStoredValue('ENABLED_MAP', value), { deep: true })
 
-// 监听刷新间隔变化
+// 监听刷新间隔变化，重启定时器
 watch(refreshInterval, () => {
   if (hasAnyAutoSellEnabled.value) {
     startRefreshTimer()
@@ -386,7 +394,7 @@ watch(sellRatio, (value) => setStoredValue('SELL_RATIO', value))
 watch(refreshInterval, (value) => setStoredValue('REFRESH_INTERVAL', value))
 watch(cooldownTime, (value) => setStoredValue('COOLDOWN_TIME', value))
 
-// 组件销毁时清理
+// 组件销毁时清理定时器
 onBeforeUnmount(() => {
   stopRefreshTimer()
 })
@@ -481,8 +489,8 @@ function toggleAutoSell(outcome: string) {
         </div>
 
         <!-- 刷新间隔 -->
-        <div class="flex items-center gap-1.5" title="刷新间隔：每隔多少秒检查一次持仓和价格">
-          <span class="text-xs text-base-content/60 shrink-0 cursor-help border-b border-dashed border-base-content/30">间隔</span>
+        <div class="flex items-center gap-1.5" title="持仓刷新间隔：每隔多少秒刷新一次持仓数据">
+          <span class="text-xs text-base-content/60 shrink-0 cursor-help border-b border-dashed border-base-content/30">刷新</span>
           <input
             v-model.number="refreshInterval"
             type="number"

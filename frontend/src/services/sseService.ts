@@ -1,5 +1,5 @@
 import { fetchEventSource } from '@microsoft/fetch-event-source'
-import type { LiveStreamRequest, SSEEventHandlers, SSEEventType } from '@/types/sse'
+import type { LiveStreamRequest, SSEEventHandlers, SSEEventType, StrategySignalEventData } from '@/types/sse'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
@@ -22,6 +22,9 @@ export class SSEService {
   private abortController: AbortController | null = null
   private handlers: SSEEventHandlers = {}
 
+  // 策略信号订阅者
+  private strategySignalListeners = new Set<(data: StrategySignalEventData) => void>()
+
   // 保活相关状态
   private lastRequest: LiveStreamRequest | null = null
   private lastToken: string | undefined = undefined
@@ -36,6 +39,12 @@ export class SSEService {
 
   setHandlers(handlers: SSEEventHandlers) {
     this.handlers = handlers
+  }
+
+  // 订阅策略信号（用于独立服务直接接收 SSE 信号）
+  subscribeStrategySignal(listener: (data: StrategySignalEventData) => void): () => void {
+    this.strategySignalListeners.add(listener)
+    return () => this.strategySignalListeners.delete(listener)
   }
 
   setStateChangeCallback(callback: (state: SSEConnectionState) => void) {
@@ -252,6 +261,8 @@ export class SSEService {
           break
         case 'strategy_signal':
           this.handlers.onStrategySignal?.(parsed)
+          // 通知所有直接订阅的服务
+          this.strategySignalListeners.forEach(listener => listener(parsed))
           break
         case 'error':
           this.handlers.onError?.(parsed)

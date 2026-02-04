@@ -1,54 +1,33 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
-import { useAuthStore, useGameStore, useToastStore } from '@/stores'
-import type { StrategySignalEventData } from '@/types/sse'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useAuthStore, useGameStore } from '@/stores'
+import { autoBuyService, type AutoBuyState } from '@/services/autoBuyService'
 
 const BOTH_SIDE = '__BOTH__'
 
 const authStore = useAuthStore()
 const gameStore = useGameStore()
-const toastStore = useToastStore()
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
-const ORDER_TYPE = 'GTC'
-const POLYMARKET_PRIVATE_KEY = 'POLYMARKET_PRIVATE_KEY'
-const POLYMARKET_PROXY_ADDRESS = 'POLYMARKET_PROXY_ADDRESS'
 
-// localStorage 持久化键
-const STORAGE_PREFIX = 'AUTO_BUY_'
-const getStorageKey = (key: string) => `${STORAGE_PREFIX}${key}`
+// 服务状态（响应式）
+const serviceState = ref<AutoBuyState>(autoBuyService.getState())
 
-// 从 localStorage 读取配置
-function getStoredValue<T>(key: string, defaultValue: T): T {
-  if (typeof window === 'undefined') return defaultValue
-  const stored = localStorage.getItem(getStorageKey(key))
-  if (stored === null) return defaultValue
-  try {
-    return JSON.parse(stored) as T
-  } catch {
-    return defaultValue
-  }
-}
+// 订阅服务状态变化
+let unsubscribe: (() => void) | null = null
 
-function setStoredValue<T>(key: string, value: T) {
-  if (typeof window === 'undefined') return
-  localStorage.setItem(getStorageKey(key), JSON.stringify(value))
-}
+onMounted(() => {
+  unsubscribe = autoBuyService.onStateChange((state) => {
+    serviceState.value = state
+  })
+})
 
-// 控制状态
-const autoBuyEnabled = ref(false)
-const orderSide = ref<string>(getStoredValue('SIDE', BOTH_SIDE)) // outcome 名称或 BOTH_SIDE
-const orderAmount = ref(getStoredValue('AMOUNT', 10))
-
-// 运行状态
-const lastOrderTime = ref<Date | null>(null)
-// 使用 outcome 名称作为 key 的统计
-const orderStats = reactive<Record<string, { count: number; amount: number }>>({})
-const isOrdering = ref(false)
+onUnmounted(() => {
+  unsubscribe?.()
+})
 
 // 计算属性
 const polymarketInfo = computed(() => gameStore.polymarketInfo)
 
-// 可用的 outcome 列表（从市场信息中提取）
+// 可用的 outcome 列表
 const availableOutcomes = computed(() => {
   const info = polymarketInfo.value
   if (!info) return []
@@ -57,26 +36,26 @@ const availableOutcomes = computed(() => {
 
 // 当前选中的 outcome 是否有效
 const isValidSide = computed(() => {
-  if (orderSide.value === BOTH_SIDE) return true
-  return availableOutcomes.value.includes(orderSide.value)
+  if (serviceState.value.config.side === BOTH_SIDE) return true
+  return availableOutcomes.value.includes(serviceState.value.config.side)
 })
 
 // 当市场信息变化时，如果当前选择无效，重置为双边
 watch(availableOutcomes, (outcomes) => {
   if (outcomes.length > 0 && !isValidSide.value) {
-    orderSide.value = BOTH_SIDE
+    autoBuyService.setConfig({ side: BOTH_SIDE })
   }
 })
 
 const statusText = computed(() => {
-  if (!autoBuyEnabled.value) return '已关闭'
-  if (isOrdering.value) return '下单中...'
+  if (!serviceState.value.enabled) return '已关闭'
+  if (serviceState.value.isOrdering) return '下单中...'
   return '等待信号'
 })
 
 const statusClass = computed(() => {
-  if (!autoBuyEnabled.value) return 'text-base-content/50'
-  if (isOrdering.value) return 'text-warning'
+  if (!serviceState.value.enabled) return 'text-base-content/50'
+  if (serviceState.value.isOrdering) return 'text-warning'
   return 'text-success'
 })
 
@@ -96,170 +75,6 @@ const latestSignalClass = computed(() => {
   return 'text-base-content/50'
 })
 
-// 获取目标 token
-function getTargetTokens() {
-  const info = polymarketInfo.value
-  if (!info) return []
-
-  if (orderSide.value === BOTH_SIDE) {
-    return info.tokens
-  }
-
-  return info.tokens.filter(token => token.outcome === orderSide.value)
-}
-
-// 获取价格 (bestAsk)
-function getBestAsk(tokenId: string): number | null {
-  const snapshot = gameStore.polymarketBook[tokenId]
-  return snapshot?.bestAsk ?? null
-}
-
-// 计算 size: amount / price
-function calculateSize(amount: number, price: number): number {
-  if (price <= 0 || price >= 1) return 0
-  return Math.floor((amount / price) * 100) / 100
-}
-
-// 获取配置
-function getPrivateKey(): string {
-  return localStorage.getItem(POLYMARKET_PRIVATE_KEY)?.trim() ?? ''
-}
-
-function getProxyAddress(): string {
-  return localStorage.getItem(POLYMARKET_PROXY_ADDRESS)?.trim() ?? ''
-}
-
-// 下单条件检查
-function canPlaceOrder(): { ok: boolean; reason?: string } {
-  if (isOrdering.value) return { ok: false, reason: '下单中' }
-  if (!authStore.isAuthenticated) return { ok: false, reason: '未登录' }
-  if (!getPrivateKey()) return { ok: false, reason: '未配置私钥' }
-  if (!getProxyAddress()) return { ok: false, reason: '未配置代理地址' }
-  if (orderAmount.value <= 0) return { ok: false, reason: '金额无效' }
-  if (!polymarketInfo.value) return { ok: false, reason: '无市场信息' }
-
-  const tokens = getTargetTokens()
-  if (tokens.length === 0) return { ok: false, reason: '无目标token' }
-
-  for (const token of tokens) {
-    const bestAsk = getBestAsk(token.token_id)
-    if (!bestAsk || bestAsk <= 0 || bestAsk >= 1) {
-      return { ok: false, reason: `${token.outcome} 无有效卖价` }
-    }
-  }
-  return { ok: true }
-}
-
-// 执行单边下单
-async function placeSingleOrder(tokenId: string, price: number, size: number): Promise<boolean> {
-  const privateKey = getPrivateKey()
-  const proxyAddress = getProxyAddress()
-
-  const requestBody = {
-    token_id: tokenId,
-    side: 'BUY',
-    price,
-    size,
-    order_type: ORDER_TYPE,
-    private_key: privateKey,
-    proxy_address: proxyAddress,
-  }
-
-  console.log('[AutoBuy] 发起下单请求:', { tokenId, price, size })
-
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/v1/polymarket/orders`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${authStore.token}`,
-      },
-      body: JSON.stringify(requestBody),
-    })
-
-    const data = await response.json().catch(() => null)
-
-    if (!response.ok) {
-      console.error('[AutoBuy] 下单失败:', {
-        status: response.status,
-        statusText: response.statusText,
-        response: data,
-        request: { tokenId, price, size },
-      })
-      toastStore.showError(data?.detail || `下单失败: ${response.status}`)
-      return false
-    }
-
-    console.log('[AutoBuy] 下单成功:', data)
-    return true
-  } catch (error) {
-    console.error('[AutoBuy] 下单异常:', error)
-    toastStore.showError(error instanceof Error ? error.message : '下单失败')
-    return false
-  }
-}
-
-// 监听策略信号
-watch(
-  () => gameStore.latestStrategySignal,
-  (newSignal: StrategySignalEventData | null) => {
-    if (!autoBuyEnabled.value || !newSignal) return
-
-    // 只处理 BUY 信号
-    if (newSignal.signal?.type !== 'BUY') return
-
-    console.log('[AutoBuy] 收到 BUY 信号，执行下单', newSignal.timestamp)
-    executeSignalOrder(newSignal)
-  }
-)
-
-// 执行信号驱动的下单（使用原有下单逻辑：金额/bestAsk）
-async function executeSignalOrder(_signalData: StrategySignalEventData) {
-  const check = canPlaceOrder()
-  if (!check.ok) {
-    console.warn('[AutoBuy] 无法下单:', check.reason)
-    toastStore.showWarning(`无法下单: ${check.reason}`)
-    return
-  }
-
-  isOrdering.value = true
-  const tokens = getTargetTokens()
-  let successCount = 0
-
-  try {
-    for (const token of tokens) {
-      const bestAsk = getBestAsk(token.token_id)
-      if (!bestAsk || bestAsk <= 0 || bestAsk >= 1) continue
-
-      const size = calculateSize(orderAmount.value, bestAsk)
-      if (size <= 0) continue
-
-      const success = await placeSingleOrder(token.token_id, bestAsk, size)
-      if (success) {
-        successCount++
-        // 更新统计（使用 outcome 作为 key）
-        const outcome = token.outcome
-        if (!orderStats[outcome]) {
-          orderStats[outcome] = { count: 0, amount: 0 }
-        }
-        orderStats[outcome].count++
-        orderStats[outcome].amount += orderAmount.value
-      }
-    }
-
-    if (successCount > 0) {
-      lastOrderTime.value = new Date()
-      toastStore.showSuccess(`信号买入成功 (${successCount}笔)`)
-    }
-  } finally {
-    isOrdering.value = false
-  }
-}
-
-// 配置变化时持久化
-watch(orderSide, (value) => setStoredValue('SIDE', value))
-watch(orderAmount, (value) => setStoredValue('AMOUNT', value))
-
 // 格式化时间
 function formatTime(date: Date | null): string {
   if (!date) return '--'
@@ -270,39 +85,47 @@ function formatTime(date: Date | null): string {
   })
 }
 
-// 重置统计
-function resetStats() {
-  Object.keys(orderStats).forEach(key => {
-    delete orderStats[key]
-  })
-}
-
 // 统计是否有数据
 const hasStats = computed(() => {
-  return Object.keys(orderStats).length > 0
+  return Object.keys(serviceState.value.stats).length > 0
 })
 
 // 格式化统计显示
 const statsDisplay = computed(() => {
-  const entries = Object.entries(orderStats)
+  const entries = Object.entries(serviceState.value.stats)
   if (entries.length === 0) return '--'
   return entries
     .map(([outcome, stat]) => `${outcome} x${stat.count} ($${stat.amount.toFixed(0)})`)
     .join(', ')
 })
 
-// 选择方向
+// 操作方法
+function toggleEnabled(event: Event) {
+  const checked = (event.target as HTMLInputElement).checked
+  autoBuyService.setEnabled(checked)
+}
+
 function selectSide(side: string) {
-  if (!autoBuyEnabled.value) {
-    orderSide.value = side
+  if (!serviceState.value.enabled) {
+    autoBuyService.setConfig({ side })
   }
+}
+
+function updateAmount(event: Event) {
+  const value = Number((event.target as HTMLInputElement).value)
+  if (value > 0) {
+    autoBuyService.setConfig({ amount: value })
+  }
+}
+
+function resetStats() {
+  autoBuyService.resetStats()
 }
 
 // 获取按钮样式
 function getSideButtonClass(side: string): string {
-  if (orderSide.value !== side) return 'btn-ghost'
+  if (serviceState.value.config.side !== side) return 'btn-ghost'
   if (side === BOTH_SIDE) return 'btn-primary'
-  // 第一个 outcome 用绿色，第二个用红色
   const index = availableOutcomes.value.indexOf(side)
   return index === 0 ? 'btn-success' : 'btn-error'
 }
@@ -315,10 +138,11 @@ function getSideButtonClass(side: string): string {
       <div class="flex items-center justify-between">
         <h3 class="card-title text-base">自动买入</h3>
         <input
-          v-model="autoBuyEnabled"
           type="checkbox"
           class="toggle toggle-success"
+          :checked="serviceState.enabled"
           :disabled="!polymarketInfo"
+          @change="toggleEnabled"
         />
       </div>
 
@@ -333,7 +157,7 @@ function getSideButtonClass(side: string): string {
               v-if="availableOutcomes[0]"
               class="btn btn-sm join-item"
               :class="getSideButtonClass(availableOutcomes[0])"
-              :disabled="autoBuyEnabled"
+              :disabled="serviceState.enabled"
               @click="selectSide(availableOutcomes[0])"
             >
               {{ availableOutcomes[0] }}
@@ -342,7 +166,7 @@ function getSideButtonClass(side: string): string {
             <button
               class="btn btn-sm join-item"
               :class="getSideButtonClass(BOTH_SIDE)"
-              :disabled="autoBuyEnabled"
+              :disabled="serviceState.enabled"
               @click="selectSide(BOTH_SIDE)"
             >
               双边
@@ -352,7 +176,7 @@ function getSideButtonClass(side: string): string {
               v-if="availableOutcomes[1]"
               class="btn btn-sm join-item"
               :class="getSideButtonClass(availableOutcomes[1])"
-              :disabled="autoBuyEnabled"
+              :disabled="serviceState.enabled"
               @click="selectSide(availableOutcomes[1])"
             >
               {{ availableOutcomes[1] }}
@@ -364,12 +188,13 @@ function getSideButtonClass(side: string): string {
         <div class="flex items-center gap-3">
           <span class="text-sm text-base-content/70 w-16">金额</span>
           <input
-            v-model.number="orderAmount"
             type="number"
             min="1"
             step="1"
             class="input input-bordered input-sm w-24"
-            :disabled="autoBuyEnabled"
+            :value="serviceState.config.amount"
+            :disabled="serviceState.enabled"
+            @change="updateAmount"
           />
           <span class="text-sm text-base-content/60">USDC</span>
         </div>
@@ -395,7 +220,7 @@ function getSideButtonClass(side: string): string {
           <!-- 上次下单 -->
           <div>
             <div class="text-base-content/50">上次下单</div>
-            <div class="font-medium text-base-content">{{ formatTime(lastOrderTime) }}</div>
+            <div class="font-medium text-base-content">{{ formatTime(serviceState.lastOrderTime) }}</div>
           </div>
 
           <!-- 累计统计 -->

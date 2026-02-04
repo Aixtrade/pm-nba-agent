@@ -114,8 +114,6 @@ class MergeLongStrategy(BaseStrategy):
         # 参数验证
         try:
             min_arbitrage_gap = float(min_arbitrage_gap)
-            if min_arbitrage_gap < 0:
-                min_arbitrage_gap = 0.0
         except (TypeError, ValueError):
             min_arbitrage_gap = 0.0
 
