@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { useConnectionStore, useGameStore } from '@/stores'
-import ScoreBoard from '@/components/monitor/ScoreBoard.vue'
 import BoxScore from '@/components/monitor/BoxScore.vue'
 import PlayerStatsTable from '@/components/monitor/PlayerStatsTable.vue'
 import StrategySidebar from '@/components/monitor/StrategySidebar.vue'
@@ -26,8 +25,11 @@ const gameStore = useGameStore()
 
       <!-- 中间主内容区 -->
       <div class="space-y-4 min-w-0">
-        <!-- 比分板 -->
-        <ScoreBoard />
+        <!-- 自动买入面板 -->
+        <AutoBuyPanel />
+
+        <!-- 自动卖出面板 -->
+        <AutoSellPanel />
 
         <!-- 球队统计 -->
         <BoxScore />
@@ -43,12 +45,6 @@ const gameStore = useGameStore()
             :players="gameStore.homePlayers"
           />
         </div>
-
-        <!-- 自动买入面板 -->
-        <AutoBuyPanel />
-
-        <!-- 自动卖出面板 -->
-        <AutoSellPanel />
       </div>
 
       <!-- Polymarket 右侧边栏 -->

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSSE } from '@/composables/useSSE'
-import { useAuthStore, useConnectionStore } from '@/stores'
+import { useAuthStore, useConnectionStore, useGameStore } from '@/stores'
 import type { LiveStreamRequest } from '@/types/sse'
 import StreamConfig from '@/components/monitor/StreamConfig.vue'
 import ConnectionStatus from './ConnectionStatus.vue'
@@ -10,11 +10,30 @@ import ConnectionStatus from './ConnectionStatus.vue'
 const router = useRouter()
 const { connect, disconnect, reconnect } = useSSE()
 const connectionStore = useConnectionStore()
+const gameStore = useGameStore()
 const isConfigOpen = ref(false)
 const isPolymarketConfigOpen = ref(false)
 const authStore = useAuthStore()
 const polymarketPrivateKey = ref('')
 const polymarketProxyAddress = ref('')
+
+// 比分板相关计算属性
+const hasScoreData = computed(() => gameStore.homeTeam && gameStore.awayTeam)
+
+const periodDisplay = computed(() => {
+  const scoreboard = gameStore.scoreboard
+  if (!scoreboard) return ''
+  const period = scoreboard.period
+  if (period <= 4) return `Q${period}`
+  return `OT${period - 4}`
+})
+
+const statusBadgeClass = computed(() => {
+  const status = gameStore.gameStatus.toLowerCase()
+  if (status.includes('live') || status.includes('进行中')) return 'badge-success'
+  if (status.includes('final') || status.includes('结束')) return 'badge-neutral'
+  return 'badge-info'
+})
 
 const POLYMARKET_PRIVATE_KEY = 'POLYMARKET_PRIVATE_KEY'
 const POLYMARKET_PROXY_ADDRESS = 'POLYMARKET_PROXY_ADDRESS'
@@ -77,10 +96,11 @@ function clearPolymarketConfig() {
 
 <template>
   <header class="navbar app-header sticky top-0 z-50">
-    <div class="w-full px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4 flex-nowrap">
-      <div class="flex-1 min-w-0 flex items-center gap-3 flex-nowrap">
-        <RouterLink to="/" class="btn btn-ghost text-xl font-bold">
-          NBA 实时监控
+    <div class="w-full px-4 sm:px-6 lg:px-8 grid grid-cols-[1fr_auto_1fr] items-center gap-4">
+      <!-- 左侧：标题和连接状态 -->
+      <div class="flex items-center gap-3 flex-nowrap">
+        <RouterLink to="/" class="btn btn-ghost text-xl font-bold px-2">
+          NBA
         </RouterLink>
         <ConnectionStatus />
         <button
@@ -91,7 +111,25 @@ function clearPolymarketConfig() {
           重新连接
         </button>
       </div>
-      <div class="flex-none flex items-center gap-2">
+
+      <!-- 中间：比分显示（居中） -->
+      <div v-if="hasScoreData" class="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-base-200/50">
+        <span class="badge badge-sm" :class="statusBadgeClass">{{ gameStore.gameStatus }}</span>
+        <div class="flex items-center gap-2 text-sm font-semibold">
+          <span class="text-base-content/70">{{ gameStore.awayTeam!.abbreviation }}</span>
+          <span class="text-lg tabular-nums">{{ gameStore.awayTeam!.score }}</span>
+          <span class="text-base-content/40">-</span>
+          <span class="text-lg tabular-nums">{{ gameStore.homeTeam!.score }}</span>
+          <span class="text-base-content/70">{{ gameStore.homeTeam!.abbreviation }}</span>
+        </div>
+        <span v-if="gameStore.scoreboard" class="text-xs text-base-content/50">
+          {{ periodDisplay }} {{ gameStore.scoreboard.game_clock }}
+        </span>
+      </div>
+      <div v-else></div>
+
+      <!-- 右侧：操作按钮 -->
+      <div class="flex items-center justify-end gap-2">
         <button
           v-if="authStore.isAuthenticated"
           class="btn btn-outline btn-sm"
