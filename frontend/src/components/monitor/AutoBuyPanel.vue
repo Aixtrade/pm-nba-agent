@@ -41,7 +41,6 @@ const orderAmount = ref(getStoredValue('AMOUNT', 10))
 
 // 运行状态
 const lastOrderTime = ref<Date | null>(null)
-const lastSignalTimestamp = ref<number | null>(null) // 用于去重
 // 使用 outcome 名称作为 key 的统计
 const orderStats = reactive<Record<string, { count: number; amount: number }>>({})
 const isOrdering = ref(false)
@@ -156,6 +155,18 @@ async function placeSingleOrder(tokenId: string, price: number, size: number): P
   const privateKey = getPrivateKey()
   const proxyAddress = getProxyAddress()
 
+  const requestBody = {
+    token_id: tokenId,
+    side: 'BUY',
+    price,
+    size,
+    order_type: ORDER_TYPE,
+    private_key: privateKey,
+    proxy_address: proxyAddress,
+  }
+
+  console.log('[AutoBuy] 发起下单请求:', { tokenId, price, size })
+
   try {
     const response = await fetch(`${API_BASE_URL}/api/v1/polymarket/orders`, {
       method: 'POST',
@@ -163,25 +174,26 @@ async function placeSingleOrder(tokenId: string, price: number, size: number): P
         'Content-Type': 'application/json',
         Authorization: `Bearer ${authStore.token}`,
       },
-      body: JSON.stringify({
-        token_id: tokenId,
-        side: 'BUY',
-        price,
-        size,
-        order_type: ORDER_TYPE,
-        private_key: privateKey,
-        proxy_address: proxyAddress,
-      }),
+      body: JSON.stringify(requestBody),
     })
 
+    const data = await response.json().catch(() => null)
+
     if (!response.ok) {
-      const data = await response.json().catch(() => null)
-      throw new Error(data?.detail || '下单失败')
+      console.error('[AutoBuy] 下单失败:', {
+        status: response.status,
+        statusText: response.statusText,
+        response: data,
+        request: { tokenId, price, size },
+      })
+      toastStore.showError(data?.detail || `下单失败: ${response.status}`)
+      return false
     }
 
-    await response.json().catch(() => null)
+    console.log('[AutoBuy] 下单成功:', data)
     return true
   } catch (error) {
+    console.error('[AutoBuy] 下单异常:', error)
     toastStore.showError(error instanceof Error ? error.message : '下单失败')
     return false
   }
@@ -196,12 +208,7 @@ watch(
     // 只处理 BUY 信号
     if (newSignal.signal?.type !== 'BUY') return
 
-    // 用 timestamp 去重，避免重复处理同一信号
-    const signalTs = newSignal.timestamp ? new Date(newSignal.timestamp).getTime() : Date.now()
-    if (lastSignalTimestamp.value === signalTs) return
-    lastSignalTimestamp.value = signalTs
-
-    // 执行信号驱动的下单
+    console.log('[AutoBuy] 收到 BUY 信号，执行下单', newSignal.timestamp)
     executeSignalOrder(newSignal)
   }
 )
@@ -210,6 +217,7 @@ watch(
 async function executeSignalOrder(_signalData: StrategySignalEventData) {
   const check = canPlaceOrder()
   if (!check.ok) {
+    console.warn('[AutoBuy] 无法下单:', check.reason)
     toastStore.showWarning(`无法下单: ${check.reason}`)
     return
   }
