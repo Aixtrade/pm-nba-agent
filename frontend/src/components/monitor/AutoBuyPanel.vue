@@ -118,6 +118,11 @@ function updateAmount(event: Event) {
   }
 }
 
+function toggleRoundSize(event: Event) {
+  const checked = (event.target as HTMLInputElement).checked
+  autoBuyService.setConfig({ roundSize: checked })
+}
+
 function resetStats() {
   autoBuyService.resetStats()
 }
@@ -197,6 +202,21 @@ function getSideButtonClass(side: string): string {
             @change="updateAmount"
           />
           <span class="text-sm text-base-content/60">USDC</span>
+        </div>
+
+        <!-- Size 取整 -->
+        <div class="flex items-center gap-3">
+          <span class="text-sm text-base-content/70 w-16">取整</span>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              class="checkbox checkbox-sm"
+              :checked="serviceState.config.roundSize"
+              :disabled="serviceState.enabled"
+              @change="toggleRoundSize"
+            />
+            <span class="text-sm text-base-content/60">Size 取整数</span>
+          </label>
         </div>
       </div>
 

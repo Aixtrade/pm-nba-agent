@@ -31,6 +31,7 @@ function setStoredValue<T>(key: string, value: T) {
 export interface AutoBuyConfig {
   side: string // outcome 名称或 BOTH_SIDE
   amount: number
+  roundSize: boolean // size 是否取整数
 }
 
 export interface AutoBuyStats {
@@ -52,6 +53,7 @@ class AutoBuyService {
   private config: AutoBuyConfig = {
     side: getStoredValue('SIDE', BOTH_SIDE),
     amount: getStoredValue('AMOUNT', 10),
+    roundSize: getStoredValue('ROUND_SIZE', false),
   }
   private stats: AutoBuyStats = {}
   private lastOrderTime: Date | null = null
@@ -108,6 +110,10 @@ class AutoBuyService {
     if (config.amount !== undefined) {
       this.config.amount = config.amount
       setStoredValue('AMOUNT', config.amount)
+    }
+    if (config.roundSize !== undefined) {
+      this.config.roundSize = config.roundSize
+      setStoredValue('ROUND_SIZE', config.roundSize)
     }
     this.notifyStateChange()
   }
@@ -183,7 +189,11 @@ class AutoBuyService {
 
   private calculateSize(amount: number, price: number): number {
     if (price <= 0 || price >= 1) return 0
-    return Math.floor((amount / price) * 100) / 100
+    const rawSize = amount / price
+    if (this.config.roundSize) {
+      return Math.floor(rawSize)
+    }
+    return Math.floor(rawSize * 100) / 100
   }
 
   // 执行下单
