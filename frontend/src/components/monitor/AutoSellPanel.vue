@@ -127,6 +127,13 @@ function getBestBid(tokenId: string): number | null {
   return snapshot?.bestBid ?? null
 }
 
+// 根据 outcome 获取实时 bestBid
+function getBestBidByOutcome(outcome: string): number | null {
+  const tokenId = getTokenIdByOutcome(outcome)
+  if (!tokenId) return null
+  return getBestBid(tokenId)
+}
+
 // 获取持仓（更新到 store）
 async function fetchMarketPositions() {
   if (!authStore.isAuthenticated) return
@@ -174,11 +181,12 @@ function calculateProfitRate(avgPrice: number | null | undefined, curPrice: numb
   return (curPrice - avgPrice) / avgPrice
 }
 
-// 检查是否可以卖出
-function canSellOutcome(side: { outcome: string; size: number; avg_price?: number | null; cur_price?: number | null }, checkEnabled = true): {
+// 检查是否可以卖出（使用订单簿实时 bestBid 计算利润率）
+function canSellOutcome(side: { outcome: string; size: number; avg_price?: number | null }, checkEnabled = true): {
   canSell: boolean
   reason?: string
   profitRate?: number
+  realtimePrice?: number
 } {
   // 检查该 outcome 是否启用自动卖出（仅在自动卖出流程中检查）
   if (checkEnabled && !autoSellEnabledMap[side.outcome]) {
@@ -190,13 +198,19 @@ function canSellOutcome(side: { outcome: string; size: number; avg_price?: numbe
     return { canSell: false, reason: '无持仓' }
   }
 
-  // 检查价格数据
-  if (side.avg_price == null || side.cur_price == null) {
-    return { canSell: false, reason: '无价格数据' }
+  // 获取实时 bestBid 作为现价
+  const realtimePrice = getBestBidByOutcome(side.outcome)
+  if (realtimePrice == null || realtimePrice <= 0) {
+    return { canSell: false, reason: '无实时价格' }
   }
 
-  // 计算利润率
-  const profitRate = calculateProfitRate(side.avg_price, side.cur_price)
+  // 检查均价
+  if (side.avg_price == null || side.avg_price <= 0) {
+    return { canSell: false, reason: '无均价数据' }
+  }
+
+  // 计算利润率（使用实时 bestBid）
+  const profitRate = calculateProfitRate(side.avg_price, realtimePrice)
   if (profitRate === null) {
     return { canSell: false, reason: '无法计算利润率' }
   }
@@ -204,7 +218,7 @@ function canSellOutcome(side: { outcome: string; size: number; avg_price?: numbe
   // 检查是否达到最小利润率
   const minRate = minProfitRate.value / 100
   if (profitRate < minRate) {
-    return { canSell: false, reason: `利润率不足 (${(profitRate * 100).toFixed(1)}% < ${minProfitRate.value}%)`, profitRate }
+    return { canSell: false, reason: `利润率不足 (${(profitRate * 100).toFixed(1)}% < ${minProfitRate.value}%)`, profitRate, realtimePrice }
   }
 
   // 检查冷却时间
@@ -212,11 +226,11 @@ function canSellOutcome(side: { outcome: string; size: number; avg_price?: numbe
   if (lastSell) {
     const elapsed = (Date.now() - lastSell.getTime()) / 1000
     if (elapsed < cooldownTime.value) {
-      return { canSell: false, reason: `冷却中 (${Math.ceil(cooldownTime.value - elapsed)}秒)`, profitRate }
+      return { canSell: false, reason: `冷却中 (${Math.ceil(cooldownTime.value - elapsed)}秒)`, profitRate, realtimePrice }
     }
   }
 
-  return { canSell: true, profitRate }
+  return { canSell: true, profitRate, realtimePrice }
 }
 
 // 执行卖出
@@ -400,12 +414,12 @@ const statsDisplay = computed(() => {
 // 持仓状态显示
 const positionStatusList = computed(() => {
   return positionSides.value.map(side => {
-    const profitRate = calculateProfitRate(side.avg_price, side.cur_price)
     const enabled = !!autoSellEnabledMap[side.outcome]
     // 不检查启用状态，以便显示其他原因
-    const { canSell, reason } = canSellOutcome(side, false)
+    const { canSell, reason, profitRate, realtimePrice } = canSellOutcome(side, false)
     return {
       ...side,
+      realtimePrice, // 实时 bestBid
       profitRate,
       enabled,
       // 只有启用且满足条件才显示可卖
@@ -528,13 +542,13 @@ function toggleAutoSell(outcome: string) {
             <div class="mt-1 flex items-center justify-between text-[11px] text-base-content/60">
               <span>持仓: {{ formatSize(pos.size) }}</span>
               <span>均价: {{ formatPrice(pos.avg_price) }}</span>
-              <span>现价: {{ formatPrice(pos.cur_price) }}</span>
+              <span title="实时订单簿 bestBid">现价: {{ formatPrice(pos.realtimePrice) }}</span>
             </div>
             <div class="mt-0.5 flex items-center justify-between text-[11px]">
               <span
                 :class="(pos.profitRate ?? 0) >= 0 ? 'text-success' : 'text-error'"
               >
-                收益率: {{ pos.profitRate !== null ? `${(pos.profitRate * 100).toFixed(1)}%` : '--' }}
+                收益率: {{ pos.profitRate != null ? `${(pos.profitRate * 100).toFixed(1)}%` : '--' }}
               </span>
               <span v-if="pos.lastSell" class="text-[10px] text-base-content/40">
                 上次卖出: {{ formatTimeAgo(pos.lastSell) }}
