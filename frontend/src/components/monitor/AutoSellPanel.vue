@@ -31,11 +31,14 @@ function setStoredValue<T>(key: string, value: T) {
 }
 
 // 配置参数
-const autoSellEnabled = ref(false)
+const autoSellEnabledMap = reactive<Record<string, boolean>>(getStoredValue('ENABLED_MAP', {})) // 每个 outcome 的开关
 const minProfitRate = ref(getStoredValue('MIN_PROFIT_RATE', 5)) // 最小利润率 %
 const sellRatio = ref(getStoredValue('SELL_RATIO', 100)) // 卖出比例 %
 const refreshInterval = ref(getStoredValue('REFRESH_INTERVAL', 3)) // 刷新间隔（秒）
 const cooldownTime = ref(getStoredValue('COOLDOWN_TIME', 30)) // 冷却时间（秒）
+
+// 计算是否有任何一个 outcome 开启了自动卖出
+const hasAnyAutoSellEnabled = computed(() => Object.values(autoSellEnabledMap).some(v => v))
 
 // 运行状态（使用 store 中的持仓数据）
 const positionSides = computed(() => gameStore.positionSides)
@@ -50,14 +53,14 @@ let refreshTimer: ReturnType<typeof setInterval> | null = null
 const polymarketInfo = computed(() => gameStore.polymarketInfo)
 
 const statusText = computed(() => {
-  if (!autoSellEnabled.value) return '已关闭'
+  if (!hasAnyAutoSellEnabled.value) return '已关闭'
   if (isOrdering.value) return '卖出中...'
   if (positionsLoading.value) return '刷新中...'
   return '监控中'
 })
 
 const statusClass = computed(() => {
-  if (!autoSellEnabled.value) return 'text-base-content/50'
+  if (!hasAnyAutoSellEnabled.value) return 'text-base-content/50'
   if (isOrdering.value) return 'text-warning'
   return 'text-success'
 })
@@ -172,11 +175,16 @@ function calculateProfitRate(avgPrice: number | null | undefined, curPrice: numb
 }
 
 // 检查是否可以卖出
-function canSellOutcome(side: { outcome: string; size: number; avg_price?: number | null; cur_price?: number | null }): {
+function canSellOutcome(side: { outcome: string; size: number; avg_price?: number | null; cur_price?: number | null }, checkEnabled = true): {
   canSell: boolean
   reason?: string
   profitRate?: number
 } {
+  // 检查该 outcome 是否启用自动卖出（仅在自动卖出流程中检查）
+  if (checkEnabled && !autoSellEnabledMap[side.outcome]) {
+    return { canSell: false, reason: '未启用' }
+  }
+
   // 检查持仓数量
   if (!side.size || side.size <= 0) {
     return { canSell: false, reason: '无持仓' }
@@ -278,7 +286,7 @@ async function executeSell(side: { outcome: string; size: number; avg_price?: nu
 
 // 检查并执行自动卖出
 async function checkAndAutoSell() {
-  if (!autoSellEnabled.value || isOrdering.value) return
+  if (!hasAnyAutoSellEnabled.value || isOrdering.value) return
   if (!authStore.isAuthenticated) return
   if (!getPrivateKey() || !getProxyAddress()) return
 
@@ -322,7 +330,7 @@ async function checkAndAutoSell() {
 // 启动/停止定时器
 function startRefreshTimer() {
   stopRefreshTimer()
-  if (autoSellEnabled.value && refreshInterval.value > 0) {
+  if (hasAnyAutoSellEnabled.value && refreshInterval.value > 0) {
     // 立即执行一次
     checkAndAutoSell()
     // 设置定时器
@@ -340,7 +348,7 @@ function stopRefreshTimer() {
 }
 
 // 监听开关变化
-watch(autoSellEnabled, (enabled) => {
+watch(hasAnyAutoSellEnabled, (enabled) => {
   if (enabled) {
     startRefreshTimer()
   } else {
@@ -348,9 +356,12 @@ watch(autoSellEnabled, (enabled) => {
   }
 })
 
+// 持久化 autoSellEnabledMap
+watch(autoSellEnabledMap, (value) => setStoredValue('ENABLED_MAP', value), { deep: true })
+
 // 监听刷新间隔变化
 watch(refreshInterval, () => {
-  if (autoSellEnabled.value) {
+  if (hasAnyAutoSellEnabled.value) {
     startRefreshTimer()
   }
 })
@@ -390,33 +401,37 @@ const statsDisplay = computed(() => {
 const positionStatusList = computed(() => {
   return positionSides.value.map(side => {
     const profitRate = calculateProfitRate(side.avg_price, side.cur_price)
-    const { canSell, reason } = canSellOutcome(side)
+    const enabled = !!autoSellEnabledMap[side.outcome]
+    // 不检查启用状态，以便显示其他原因
+    const { canSell, reason } = canSellOutcome(side, false)
     return {
       ...side,
       profitRate,
-      canSell,
-      reason,
+      enabled,
+      // 只有启用且满足条件才显示可卖
+      canSell: enabled && canSell,
+      reason: enabled ? reason : '未启用',
       lastSell: lastSellTime[side.outcome] ?? null,
     }
   })
 })
+
+// 切换单个 outcome 的自动卖出开关
+function toggleAutoSell(outcome: string) {
+  autoSellEnabledMap[outcome] = !autoSellEnabledMap[outcome]
+}
 </script>
 
 <template>
   <div class="card glass-card ring-1 ring-base-content/30 ring-offset-2 ring-offset-base-100">
     <div class="card-body">
-      <!-- 标题与开关 -->
+      <!-- 标题 -->
       <div class="flex items-center justify-between gap-2">
         <div class="flex items-baseline gap-2">
           <h3 class="card-title text-base">自动卖出</h3>
           <span class="text-[10px] text-base-content/40">现价/均价 &ge; 阈值时卖出</span>
         </div>
-        <input
-          v-model="autoSellEnabled"
-          type="checkbox"
-          class="toggle toggle-error shrink-0"
-          :disabled="!polymarketInfo || !authStore.isAuthenticated"
-        />
+        <span :class="statusClass" class="text-xs">{{ statusText }}</span>
       </div>
 
       <!-- 配置区域 - 紧凑两行布局 -->
@@ -431,7 +446,7 @@ const positionStatusList = computed(() => {
             max="100"
             step="1"
             class="input input-bordered input-xs w-14 text-center"
-            :disabled="autoSellEnabled"
+            :disabled="hasAnyAutoSellEnabled"
           />
           <span class="text-xs text-base-content/50">%</span>
         </div>
@@ -446,7 +461,7 @@ const positionStatusList = computed(() => {
             max="100"
             step="1"
             class="input input-bordered input-xs w-14 text-center"
-            :disabled="autoSellEnabled"
+            :disabled="hasAnyAutoSellEnabled"
           />
           <span class="text-xs text-base-content/50">%</span>
         </div>
@@ -461,7 +476,7 @@ const positionStatusList = computed(() => {
             max="60"
             step="1"
             class="input input-bordered input-xs w-14 text-center"
-            :disabled="autoSellEnabled"
+            :disabled="hasAnyAutoSellEnabled"
           />
           <span class="text-xs text-base-content/50">秒</span>
         </div>
@@ -476,7 +491,7 @@ const positionStatusList = computed(() => {
             max="300"
             step="5"
             class="input input-bordered input-xs w-14 text-center"
-            :disabled="autoSellEnabled"
+            :disabled="hasAnyAutoSellEnabled"
           />
           <span class="text-xs text-base-content/50">秒</span>
         </div>
@@ -484,12 +499,7 @@ const positionStatusList = computed(() => {
 
       <!-- 持仓状态区域 -->
       <div class="mt-3 rounded-lg border border-base-200/70 px-3 py-2 ring-1 ring-base-content/20">
-        <div class="flex items-center justify-between gap-3">
-          <div class="text-sm font-semibold">持仓监控</div>
-          <div class="flex items-center gap-2 text-xs text-base-content/60">
-            <span :class="statusClass">{{ statusText }}</span>
-          </div>
-        </div>
+        <div class="text-sm font-semibold">持仓监控</div>
 
         <div class="mt-2 space-y-2">
           <div
@@ -498,12 +508,21 @@ const positionStatusList = computed(() => {
             class="rounded-md bg-base-100/60 px-2 py-2"
           >
             <div class="flex items-center justify-between">
-              <span class="text-sm font-semibold text-base-content">{{ pos.outcome }}</span>
+              <div class="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  :checked="pos.enabled"
+                  class="toggle toggle-error toggle-xs"
+                  :disabled="!polymarketInfo || !authStore.isAuthenticated || !getPrivateKey() || !getProxyAddress()"
+                  @change="toggleAutoSell(pos.outcome)"
+                />
+                <span class="text-sm font-semibold text-base-content">{{ pos.outcome }}</span>
+              </div>
               <span
-                class="text-sm font-semibold"
-                :class="pos.canSell ? 'text-success' : 'text-base-content/60'"
+                class="text-xs"
+                :class="pos.canSell ? 'text-success font-semibold' : 'text-base-content/50'"
               >
-                {{ pos.canSell ? '可卖' : '等待' }}
+                {{ pos.canSell ? '可卖' : pos.reason }}
               </span>
             </div>
             <div class="mt-1 flex items-center justify-between text-[11px] text-base-content/60">
@@ -517,12 +536,9 @@ const positionStatusList = computed(() => {
               >
                 收益率: {{ pos.profitRate !== null ? `${(pos.profitRate * 100).toFixed(1)}%` : '--' }}
               </span>
-              <span class="text-base-content/50">
-                {{ pos.reason ?? '' }}
+              <span v-if="pos.lastSell" class="text-[10px] text-base-content/40">
+                上次卖出: {{ formatTimeAgo(pos.lastSell) }}
               </span>
-            </div>
-            <div v-if="pos.lastSell" class="mt-0.5 text-[10px] text-base-content/40">
-              上次卖出: {{ formatTimeAgo(pos.lastSell) }}
             </div>
           </div>
 
