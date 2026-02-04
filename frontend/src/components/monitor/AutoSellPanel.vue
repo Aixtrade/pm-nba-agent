@@ -30,12 +30,30 @@ function setStoredValue<T>(key: string, value: T) {
   localStorage.setItem(getStorageKey(key), JSON.stringify(value))
 }
 
-// 配置参数
+// 配置参数（每个 outcome 独立配置）
 const autoSellEnabledMap = reactive<Record<string, boolean>>(getStoredValue('ENABLED_MAP', {})) // 每个 outcome 的开关
-const minProfitRate = ref(getStoredValue('MIN_PROFIT_RATE', 5)) // 最小利润率 %
-const sellRatio = ref(getStoredValue('SELL_RATIO', 100)) // 卖出比例 %
-const refreshInterval = ref(getStoredValue('REFRESH_INTERVAL', 3)) // 持仓刷新间隔（秒）
-const cooldownTime = ref(getStoredValue('COOLDOWN_TIME', 30)) // 冷却时间（秒）
+const minProfitRateMap = reactive<Record<string, number>>(getStoredValue('MIN_PROFIT_RATE_MAP', {})) // 每个 outcome 的最小利润率 %
+const sellRatioMap = reactive<Record<string, number>>(getStoredValue('SELL_RATIO_MAP', {})) // 每个 outcome 的卖出比例 %
+const cooldownTimeMap = reactive<Record<string, number>>(getStoredValue('COOLDOWN_TIME_MAP', {})) // 每个 outcome 的冷却时间（秒）
+const refreshInterval = ref(getStoredValue('REFRESH_INTERVAL', 3)) // 持仓刷新间隔（秒）- 统一配置
+
+// 默认参数值
+const DEFAULT_MIN_PROFIT_RATE = 5
+const DEFAULT_SELL_RATIO = 100
+const DEFAULT_COOLDOWN_TIME = 30
+
+// 获取 outcome 的参数（带默认值）
+function getMinProfitRate(outcome: string): number {
+  return minProfitRateMap[outcome] ?? DEFAULT_MIN_PROFIT_RATE
+}
+
+function getSellRatio(outcome: string): number {
+  return sellRatioMap[outcome] ?? DEFAULT_SELL_RATIO
+}
+
+function getCooldownTime(outcome: string): number {
+  return cooldownTimeMap[outcome] ?? DEFAULT_COOLDOWN_TIME
+}
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
@@ -216,18 +234,20 @@ function canSellOutcome(side: { outcome: string; size: number; avg_price?: numbe
     return { canSell: false, reason: '无法计算利润率' }
   }
 
-  // 检查是否达到最小利润率
-  const minRate = minProfitRate.value / 100
+  // 检查是否达到最小利润率（使用该 outcome 的配置）
+  const minProfitRateValue = getMinProfitRate(side.outcome)
+  const minRate = minProfitRateValue / 100
   if (profitRate < minRate) {
-    return { canSell: false, reason: `利润率不足 (${(profitRate * 100).toFixed(1)}% < ${minProfitRate.value}%)`, profitRate, realtimePrice }
+    return { canSell: false, reason: `利润率不足 (${(profitRate * 100).toFixed(1)}% < ${minProfitRateValue}%)`, profitRate, realtimePrice }
   }
 
-  // 检查冷却时间
+  // 检查冷却时间（使用该 outcome 的配置）
+  const cooldownTimeValue = getCooldownTime(side.outcome)
   const lastSell = lastSellTime[side.outcome]
   if (lastSell) {
     const elapsed = (Date.now() - lastSell.getTime()) / 1000
-    if (elapsed < cooldownTime.value) {
-      return { canSell: false, reason: `冷却中 (${Math.ceil(cooldownTime.value - elapsed)}秒)`, profitRate, realtimePrice }
+    if (elapsed < cooldownTimeValue) {
+      return { canSell: false, reason: `冷却中 (${Math.ceil(cooldownTimeValue - elapsed)}秒)`, profitRate, realtimePrice }
     }
   }
 
@@ -249,8 +269,9 @@ async function executeSell(side: { outcome: string; size: number; avg_price?: nu
     return false
   }
 
-  // 计算卖出数量
-  const sellSize = Math.floor(side.size * (sellRatio.value / 100) * 100) / 100
+  // 计算卖出数量（使用该 outcome 的配置）
+  const sellRatioValue = getSellRatio(side.outcome)
+  const sellSize = Math.floor(side.size * (sellRatioValue / 100) * 100) / 100
   if (sellSize <= 0) {
     console.error('卖出数量为0:', side.outcome)
     return false
@@ -389,10 +410,10 @@ watch(refreshInterval, () => {
 })
 
 // 配置变化时持久化
-watch(minProfitRate, (value) => setStoredValue('MIN_PROFIT_RATE', value))
-watch(sellRatio, (value) => setStoredValue('SELL_RATIO', value))
+watch(minProfitRateMap, (value) => setStoredValue('MIN_PROFIT_RATE_MAP', value), { deep: true })
+watch(sellRatioMap, (value) => setStoredValue('SELL_RATIO_MAP', value), { deep: true })
+watch(cooldownTimeMap, (value) => setStoredValue('COOLDOWN_TIME_MAP', value), { deep: true })
 watch(refreshInterval, (value) => setStoredValue('REFRESH_INTERVAL', value))
-watch(cooldownTime, (value) => setStoredValue('COOLDOWN_TIME', value))
 
 // 组件销毁时清理定时器
 onBeforeUnmount(() => {
@@ -434,6 +455,10 @@ const positionStatusList = computed(() => {
       canSell: enabled && canSell,
       reason: enabled ? reason : '未启用',
       lastSell: lastSellTime[side.outcome] ?? null,
+      // 各自的参数配置
+      minProfitRate: getMinProfitRate(side.outcome),
+      sellRatio: getSellRatio(side.outcome),
+      cooldownTime: getCooldownTime(side.outcome),
     }
   })
 })
@@ -453,81 +478,30 @@ function toggleAutoSell(outcome: string) {
           <h3 class="card-title text-base">自动卖出</h3>
           <span class="text-[10px] text-base-content/40">现价/均价 &ge; 阈值时卖出</span>
         </div>
-        <span :class="statusClass" class="text-xs">{{ statusText }}</span>
-      </div>
-
-      <!-- 配置区域 - 紧凑两行布局 -->
-      <div class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
-        <!-- 利润率 -->
-        <div class="flex items-center gap-1.5" title="最小利润率：(现价-均价)/均价 达到此值才触发卖出">
-          <span class="text-xs text-base-content/60 shrink-0 cursor-help border-b border-dashed border-base-content/30">利润</span>
-          <input
-            v-model.number="minProfitRate"
-            type="number"
-            min="0"
-            max="100"
-            step="1"
-            class="input input-bordered input-xs w-14 text-center"
-            :disabled="hasAnyAutoSellEnabled"
-          />
-          <span class="text-xs text-base-content/50">%</span>
-        </div>
-
-        <!-- 卖出比例 -->
-        <div class="flex items-center gap-1.5" title="卖出比例：触发时卖出持仓的百分比，100%为全部卖出">
-          <span class="text-xs text-base-content/60 shrink-0 cursor-help border-b border-dashed border-base-content/30">比例</span>
-          <input
-            v-model.number="sellRatio"
-            type="number"
-            min="1"
-            max="100"
-            step="1"
-            class="input input-bordered input-xs w-14 text-center"
-            :disabled="hasAnyAutoSellEnabled"
-          />
-          <span class="text-xs text-base-content/50">%</span>
-        </div>
-
-        <!-- 刷新间隔 -->
-        <div class="flex items-center gap-1.5" title="持仓刷新间隔：每隔多少秒刷新一次持仓数据">
-          <span class="text-xs text-base-content/60 shrink-0 cursor-help border-b border-dashed border-base-content/30">刷新</span>
-          <input
-            v-model.number="refreshInterval"
-            type="number"
-            min="1"
-            max="60"
-            step="1"
-            class="input input-bordered input-xs w-14 text-center"
-            :disabled="hasAnyAutoSellEnabled"
-          />
-          <span class="text-xs text-base-content/50">秒</span>
-        </div>
-
-        <!-- 冷却时间 -->
-        <div class="flex items-center gap-1.5" title="冷却时间：同一边卖出后需等待的时间，防止重复卖出">
-          <span class="text-xs text-base-content/60 shrink-0 cursor-help border-b border-dashed border-base-content/30">冷却</span>
-          <input
-            v-model.number="cooldownTime"
-            type="number"
-            min="0"
-            max="300"
-            step="5"
-            class="input input-bordered input-xs w-14 text-center"
-            :disabled="hasAnyAutoSellEnabled"
-          />
-          <span class="text-xs text-base-content/50">秒</span>
+        <div class="flex items-center gap-3">
+          <!-- 刷新间隔 -->
+          <div class="flex items-center gap-1" title="持仓刷新间隔">
+            <span class="text-[10px] text-base-content/50">刷新</span>
+            <input
+              v-model.number="refreshInterval"
+              type="number"
+              min="1"
+              max="60"
+              step="1"
+              class="input input-bordered input-xs w-10 text-center text-[10px] px-1"
+              :disabled="hasAnyAutoSellEnabled"
+            /><span class="text-[10px] text-base-content/40">秒</span>
+          </div>
+          <span :class="statusClass" class="text-xs">{{ statusText }}</span>
         </div>
       </div>
 
       <!-- 持仓状态区域 -->
-      <div class="mt-3 rounded-lg border border-base-200/70 px-3 py-2 ring-1 ring-base-content/20">
-        <div class="text-sm font-semibold">持仓监控</div>
-
-        <div class="mt-2 space-y-2">
+      <div class="mt-3 grid grid-cols-2 gap-4">
           <div
             v-for="pos in positionStatusList"
             :key="pos.outcome"
-            class="rounded-md bg-base-100/60 px-2 py-2"
+            class="rounded-lg bg-base-100 px-3 py-2 ring-1 ring-base-content/15"
           >
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
@@ -547,26 +521,63 @@ function toggleAutoSell(outcome: string) {
                 {{ pos.canSell ? '可卖' : pos.reason }}
               </span>
             </div>
-            <div class="mt-1 flex items-center justify-between text-[11px] text-base-content/60">
+            <div class="mt-1 flex flex-wrap gap-x-3 text-xs text-base-content/60">
               <span>持仓: {{ formatSize(pos.size) }}</span>
               <span>均价: {{ formatPrice(pos.avg_price) }}</span>
               <span title="实时订单簿 bestBid">现价: {{ formatPrice(pos.realtimePrice) }}</span>
+              <span :class="(pos.profitRate ?? 0) >= 0 ? 'text-success' : 'text-error'">
+                收益: {{ pos.profitRate != null ? `${(pos.profitRate * 100).toFixed(1)}%` : '--' }}
+              </span>
             </div>
-            <div class="mt-0.5 flex items-center justify-between text-[11px]">
-              <span
-                :class="(pos.profitRate ?? 0) >= 0 ? 'text-success' : 'text-error'"
-              >
-                收益率: {{ pos.profitRate != null ? `${(pos.profitRate * 100).toFixed(1)}%` : '--' }}
-              </span>
-              <span v-if="pos.lastSell" class="text-[10px] text-base-content/40">
-                上次卖出: {{ formatTimeAgo(pos.lastSell) }}
-              </span>
+            <div v-if="pos.lastSell" class="text-xs text-base-content/40">
+              上次卖出: {{ formatTimeAgo(pos.lastSell) }}
+            </div>
+            <!-- 独立参数配置 -->
+            <div class="mt-2 pt-2 border-t border-base-200/50 flex flex-wrap gap-x-4 gap-y-1">
+              <div class="flex items-center gap-1" title="最小利润率：(现价-均价)/均价 达到此值才触发卖出">
+                <span class="text-xs text-base-content/50">利润</span>
+                <input
+                  :value="minProfitRateMap[pos.outcome] ?? DEFAULT_MIN_PROFIT_RATE"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  class="input input-bordered input-xs w-12 text-center"
+                  :disabled="pos.enabled"
+                  @input="minProfitRateMap[pos.outcome] = Number(($event.target as HTMLInputElement).value)"
+                /><span class="text-xs text-base-content/40">%</span>
+              </div>
+              <div class="flex items-center gap-1" title="卖出比例：触发时卖出持仓的百分比">
+                <span class="text-xs text-base-content/50">比例</span>
+                <input
+                  :value="sellRatioMap[pos.outcome] ?? DEFAULT_SELL_RATIO"
+                  type="number"
+                  min="1"
+                  max="100"
+                  step="1"
+                  class="input input-bordered input-xs w-12 text-center"
+                  :disabled="pos.enabled"
+                  @input="sellRatioMap[pos.outcome] = Number(($event.target as HTMLInputElement).value)"
+                /><span class="text-xs text-base-content/40">%</span>
+              </div>
+              <div class="flex items-center gap-1" title="冷却时间：卖出后等待时间">
+                <span class="text-xs text-base-content/50">冷却</span>
+                <input
+                  :value="cooldownTimeMap[pos.outcome] ?? DEFAULT_COOLDOWN_TIME"
+                  type="number"
+                  min="0"
+                  max="300"
+                  step="5"
+                  class="input input-bordered input-xs w-12 text-center"
+                  :disabled="pos.enabled"
+                  @input="cooldownTimeMap[pos.outcome] = Number(($event.target as HTMLInputElement).value)"
+                /><span class="text-xs text-base-content/40">秒</span>
+              </div>
             </div>
           </div>
 
-          <div v-if="positionStatusList.length === 0" class="text-center text-xs text-base-content/50 py-2">
-            暂无持仓数据
-          </div>
+        <div v-if="positionStatusList.length === 0" class="col-span-2 text-center text-xs text-base-content/50 py-2">
+          暂无持仓数据
         </div>
       </div>
 
