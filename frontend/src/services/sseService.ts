@@ -98,7 +98,7 @@ export class SSEService {
           poll_interval: this.lastRequest.poll_interval ?? 10,
           include_scoreboard: this.lastRequest.include_scoreboard ?? true,
           include_boxscore: this.lastRequest.include_boxscore ?? true,
-          analysis_interval: this.lastRequest.analysis_interval ?? 30,
+          analysis_interval: this.lastRequest.analysis_interval ?? 60,
         }),
         signal: this.abortController.signal,
         openWhenHidden: true,

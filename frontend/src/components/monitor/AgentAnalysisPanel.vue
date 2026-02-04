@@ -32,6 +32,14 @@ const analysisChunks = computed(() => gameStore.analysisChunks)
 // 缓存已完成轮次的渲染结果，避免重复渲染
 const renderedCache = new Map<number, string>()
 
+// 切换比赛时清空缓存
+watch(
+  () => gameStore.gameId,
+  () => {
+    renderedCache.clear()
+  }
+)
+
 const statusLabel = computed(() => {
   if (connectionStore.isConnecting) return '连接中'
   if (connectionStore.isConnected) return '已连接'

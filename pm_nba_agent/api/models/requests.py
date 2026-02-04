@@ -40,7 +40,7 @@ class LiveStreamRequest(BaseModel):
         description="是否启用 AI 实时分析"
     )
     analysis_interval: float = Field(
-        default=30.0,
+        default=60.0,
         ge=10.0,
         le=120.0,
         description="AI 分析间隔（秒），范围 10-120"

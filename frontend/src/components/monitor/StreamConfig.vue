@@ -42,7 +42,7 @@ const isAdding = ref(false)
 const pollInterval = ref(10)
 const includeScoreboard = ref(true)
 const includeBoxscore = ref(true)
-const analysisInterval = ref(30)
+const analysisInterval = ref(60)
 
 // 是否显示高级选项
 const showAdvanced = ref(false)

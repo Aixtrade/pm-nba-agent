@@ -11,7 +11,7 @@ class AnalysisConfig:
     api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
     base_url: str = field(default_factory=lambda: os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"))
     model: str = field(default_factory=lambda: os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
-    analysis_interval: float = field(default_factory=lambda: float(os.getenv("ANALYSIS_INTERVAL", "30")))
+    analysis_interval: float = field(default_factory=lambda: float(os.getenv("ANALYSIS_INTERVAL", "60")))
     event_interval: float = field(default_factory=lambda: float(os.getenv("ANALYSIS_EVENT_INTERVAL", "15")))
     max_tokens: int = 1024
     temperature: float = 0.7
