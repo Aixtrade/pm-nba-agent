@@ -1,11 +1,20 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { marked } from 'marked'
 import { useConnectionStore, useGameStore } from '@/stores'
 import type { AnalysisChunkEventData } from '@/types/sse'
+
+// 配置 marked：同步模式，性能更好
+marked.setOptions({
+  async: false,
+  gfm: true,
+  breaks: true,
+})
 
 interface AnalysisRoundGroup {
   round: number
   text: string
+  html: string
   isFinal: boolean
   lastTimestamp: string | null
   chunks: AnalysisChunkEventData[]
@@ -19,6 +28,9 @@ const panelRef = ref<HTMLElement | null>(null)
 const copyStatus = ref<'idle' | 'success' | 'error'>('idle')
 
 const analysisChunks = computed(() => gameStore.analysisChunks)
+
+// 缓存已完成轮次的渲染结果，避免重复渲染
+const renderedCache = new Map<number, string>()
 
 const statusLabel = computed(() => {
   if (connectionStore.isConnecting) return '连接中'
@@ -38,7 +50,7 @@ const lastAnalysisTime = computed(() => {
 })
 
 const groupedRounds = computed<AnalysisRoundGroup[]>(() => {
-  const map = new Map<number, AnalysisRoundGroup>()
+  const map = new Map<number, Omit<AnalysisRoundGroup, 'html'>>()
 
   for (const chunk of analysisChunks.value) {
     const roundNumber = typeof chunk.round === 'number' ? chunk.round : 0
@@ -59,12 +71,37 @@ const groupedRounds = computed<AnalysisRoundGroup[]>(() => {
     group.lastTimestamp = chunk.timestamp
   }
 
-  return Array.from(map.values()).sort((a, b) => a.round - b.round)
+  // 转换为数组并添加 HTML 渲染
+  return Array.from(map.values())
+    .sort((a, b) => a.round - b.round)
+    .map((group): AnalysisRoundGroup => {
+      // 已完成的轮次：优先使用缓存
+      if (group.isFinal && renderedCache.has(group.round)) {
+        return {
+          ...group,
+          html: renderedCache.get(group.round)!,
+        }
+      }
+
+      // 渲染 Markdown
+      const html = marked.parse(group.text) as string
+
+      // 完成后存入缓存
+      if (group.isFinal) {
+        renderedCache.set(group.round, html)
+      }
+
+      return { ...group, html }
+    })
 })
 
 function formatTime(timestamp: string | null): string {
   if (!timestamp) return '-'
-  const date = new Date(timestamp)
+  // 后端返回的是 UTC 时间但不带 Z 后缀，需要手动添加以确保正确解析
+  const normalizedTimestamp = timestamp.endsWith('Z') || timestamp.includes('+') || timestamp.includes('-', 10)
+    ? timestamp
+    : `${timestamp}Z`
+  const date = new Date(normalizedTimestamp)
   if (Number.isNaN(date.getTime())) return timestamp
   return date.toLocaleTimeString('zh-CN', {
     hour: '2-digit',
@@ -103,6 +140,7 @@ async function handleCopy() {
 }
 
 function handleClear() {
+  renderedCache.clear()
   gameStore.clearAnalysis()
 }
 
@@ -173,9 +211,8 @@ watch(
             </div>
             <span class="text-xs text-base-content/60">{{ formatTime(group.lastTimestamp) }}</span>
           </div>
-          <div class="text-sm leading-relaxed whitespace-pre-wrap">
-            {{ group.text }}
-          </div>
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <div class="analysis-prose text-sm leading-relaxed" v-html="group.html" />
         </div>
       </div>
 
@@ -184,3 +221,124 @@ watch(
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Markdown 渲染样式 */
+.analysis-prose :deep(p) {
+  margin-bottom: 0.5em;
+}
+
+.analysis-prose :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.analysis-prose :deep(h1),
+.analysis-prose :deep(h2),
+.analysis-prose :deep(h3),
+.analysis-prose :deep(h4) {
+  font-weight: 600;
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+}
+
+.analysis-prose :deep(h1) {
+  font-size: 1.25em;
+}
+
+.analysis-prose :deep(h2) {
+  font-size: 1.125em;
+}
+
+.analysis-prose :deep(h3),
+.analysis-prose :deep(h4) {
+  font-size: 1em;
+}
+
+.analysis-prose :deep(ul),
+.analysis-prose :deep(ol) {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.analysis-prose :deep(ul) {
+  list-style-type: disc;
+}
+
+.analysis-prose :deep(ol) {
+  list-style-type: decimal;
+}
+
+.analysis-prose :deep(li) {
+  margin: 0.25em 0;
+}
+
+.analysis-prose :deep(strong) {
+  font-weight: 600;
+}
+
+.analysis-prose :deep(em) {
+  font-style: italic;
+}
+
+.analysis-prose :deep(code) {
+  background: oklch(var(--b2));
+  padding: 0.125em 0.375em;
+  border-radius: 0.25em;
+  font-size: 0.875em;
+  font-family: ui-monospace, monospace;
+}
+
+.analysis-prose :deep(pre) {
+  background: oklch(var(--b2));
+  padding: 0.75em 1em;
+  border-radius: 0.5em;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+
+.analysis-prose :deep(pre code) {
+  background: none;
+  padding: 0;
+}
+
+.analysis-prose :deep(blockquote) {
+  border-left: 3px solid oklch(var(--bc) / 0.2);
+  padding-left: 1em;
+  margin: 0.5em 0;
+  color: oklch(var(--bc) / 0.7);
+}
+
+.analysis-prose :deep(hr) {
+  border: none;
+  border-top: 1px solid oklch(var(--bc) / 0.1);
+  margin: 1em 0;
+}
+
+.analysis-prose :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 0.875em;
+}
+
+.analysis-prose :deep(th),
+.analysis-prose :deep(td) {
+  border: 1px solid oklch(var(--bc) / 0.1);
+  padding: 0.375em 0.75em;
+  text-align: left;
+}
+
+.analysis-prose :deep(th) {
+  background: oklch(var(--b2));
+  font-weight: 600;
+}
+
+.analysis-prose :deep(a) {
+  color: oklch(var(--p));
+  text-decoration: underline;
+}
+
+.analysis-prose :deep(a:hover) {
+  opacity: 0.8;
+}
+</style>

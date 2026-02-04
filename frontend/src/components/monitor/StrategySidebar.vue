@@ -19,7 +19,7 @@ function formatSignal(sig: StrategySignalEventData | null | undefined) {
   if (!sig) return null
   return {
     event_type: 'signal' as const,
-    timestamp: sig.timestamp ? new Date(sig.timestamp).getTime() : Date.now(),
+    timestamp: sig.timestamp ?? new Date().toISOString(),
     signal: sig.signal,
     market: sig.market,
     position: sig.position,

@@ -37,7 +37,7 @@ interface ExecutionData {
 
 interface SignalEvent {
   event_type: 'signal' | 'order' | 'error' | 'status'
-  timestamp: number
+  timestamp: string
   signal?: SignalData
   market?: MarketData
   execution?: ExecutionData
@@ -82,8 +82,12 @@ function signalBadgeClass(type?: string) {
   }
 }
 
-function formatTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString('zh-CN', {
+function formatTime(ts: string): string {
+  // 后端返回的是 UTC 时间但不带 Z 后缀，需要手动添加以确保正确解析
+  const normalizedTs = ts.endsWith('Z') || ts.includes('+') || ts.includes('-', 10)
+    ? ts
+    : `${ts}Z`
+  return new Date(normalizedTs).toLocaleTimeString('zh-CN', {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
