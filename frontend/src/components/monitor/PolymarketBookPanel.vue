@@ -44,8 +44,10 @@ const rows = computed(() => {
 
 const buySizeByToken = reactive<Record<string, string>>({})
 const buyPriceByToken = reactive<Record<string, string>>({})
+const buyPriceLocked = reactive<Record<string, boolean>>({})
 const sellSizeByToken = reactive<Record<string, string>>({})
 const sellPriceByToken = reactive<Record<string, string>>({})
+const sellPriceLocked = reactive<Record<string, boolean>>({})
 const submitting = reactive<Record<string, boolean>>({})
 
 // 使用 store 中的持仓数据
@@ -146,17 +148,35 @@ function setQuickSellSize(outcome: string, tokenId: string, ratio: number) {
 }
 
 function getBuyPrice(tokenId: string, defaultPrice: number | null): string {
-  if (buyPriceByToken[tokenId] !== undefined) {
+  if (buyPriceLocked[tokenId] && buyPriceByToken[tokenId] !== undefined) {
     return buyPriceByToken[tokenId]
   }
   return defaultPrice !== null ? defaultPrice.toString() : ''
 }
 
 function getSellPrice(tokenId: string, defaultPrice: number | null): string {
-  if (sellPriceByToken[tokenId] !== undefined) {
+  if (sellPriceLocked[tokenId] && sellPriceByToken[tokenId] !== undefined) {
     return sellPriceByToken[tokenId]
   }
   return defaultPrice !== null ? defaultPrice.toString() : ''
+}
+
+function toggleBuyPriceLock(tokenId: string, currentPrice: number | null) {
+  if (buyPriceLocked[tokenId]) {
+    buyPriceLocked[tokenId] = false
+  } else {
+    buyPriceByToken[tokenId] = currentPrice?.toString() ?? ''
+    buyPriceLocked[tokenId] = true
+  }
+}
+
+function toggleSellPriceLock(tokenId: string, currentPrice: number | null) {
+  if (sellPriceLocked[tokenId]) {
+    sellPriceLocked[tokenId] = false
+  } else {
+    sellPriceByToken[tokenId] = currentPrice?.toString() ?? ''
+    sellPriceLocked[tokenId] = true
+  }
 }
 
 function setBuyPrice(tokenId: string, value: string) {
@@ -516,16 +536,27 @@ watch(
                 placeholder="份数"
                 @input="setBuySize(row.tokenId, ($event.target as HTMLInputElement).value)"
               />
-              <input
-                :value="getBuyPrice(row.tokenId, row.bestAsk)"
-                type="number"
-                min="0"
-                max="1"
-                step="0.001"
-                class="input input-bordered input-sm w-24"
-                placeholder="价格"
-                @input="setBuyPrice(row.tokenId, ($event.target as HTMLInputElement).value)"
-              />
+              <div class="relative">
+                <input
+                  :value="getBuyPrice(row.tokenId, row.bestAsk)"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.001"
+                  class="input input-bordered input-sm w-24 pr-7"
+                  :class="{ 'border-amber-400': buyPriceLocked[row.tokenId] }"
+                  placeholder="价格"
+                  @input="setBuyPrice(row.tokenId, ($event.target as HTMLInputElement).value); buyPriceLocked[row.tokenId] = true"
+                />
+                <button
+                  class="absolute right-1 top-1/2 -translate-y-1/2 text-xs opacity-60 hover:opacity-100"
+                  :class="buyPriceLocked[row.tokenId] ? 'text-amber-500' : 'text-base-content/40'"
+                  :title="buyPriceLocked[row.tokenId] ? '点击解锁，跟随市价' : '点击锁定当前价格'"
+                  @click="toggleBuyPriceLock(row.tokenId, row.bestAsk)"
+                >
+                  {{ buyPriceLocked[row.tokenId] ? '🔒' : '🔓' }}
+                </button>
+              </div>
               <button
                 class="btn btn-sm btn-success flex-1"
                 :disabled="submitting[row.tokenId]"
@@ -546,16 +577,27 @@ watch(
                   placeholder="份数"
                   @input="setSellSize(row.tokenId, ($event.target as HTMLInputElement).value)"
                 />
-                <input
-                  :value="getSellPrice(row.tokenId, row.bestBid)"
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.001"
-                  class="input input-bordered input-sm w-24"
-                  placeholder="价格"
-                  @input="setSellPrice(row.tokenId, ($event.target as HTMLInputElement).value)"
-                />
+                <div class="relative">
+                  <input
+                    :value="getSellPrice(row.tokenId, row.bestBid)"
+                    type="number"
+                    min="0"
+                    max="1"
+                    step="0.001"
+                    class="input input-bordered input-sm w-24 pr-7"
+                    :class="{ 'border-amber-400': sellPriceLocked[row.tokenId] }"
+                    placeholder="价格"
+                    @input="setSellPrice(row.tokenId, ($event.target as HTMLInputElement).value); sellPriceLocked[row.tokenId] = true"
+                  />
+                  <button
+                    class="absolute right-1 top-1/2 -translate-y-1/2 text-xs opacity-60 hover:opacity-100"
+                    :class="sellPriceLocked[row.tokenId] ? 'text-amber-500' : 'text-base-content/40'"
+                    :title="sellPriceLocked[row.tokenId] ? '点击解锁，跟随市价' : '点击锁定当前价格'"
+                    @click="toggleSellPriceLock(row.tokenId, row.bestBid)"
+                  >
+                    {{ sellPriceLocked[row.tokenId] ? '🔒' : '🔓' }}
+                  </button>
+                </div>
                 <button
                   class="btn btn-sm btn-error flex-1"
                   :disabled="submitting[row.tokenId]"
