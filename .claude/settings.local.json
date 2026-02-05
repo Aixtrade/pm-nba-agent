@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:polymarket.com)",
+      "WebSearch",
+      "Bash(source .venv/bin/activate)",
+      "Bash(uv pip install:*)",
+      "Bash(python examples/player_stats_analysis.py:*)",
+      "Bash(python3:*)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(python:*)",
+      "Bash(uv run python:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(tree:*)",
+      "Bash(npm install)",
+      "Bash(npm run type-check:*)",
+      "Bash(timeout 10 npm run dev:*)",
+      "Bash(curl:*)",
+      "Bash(git checkout:*)",
+      "Bash(chmod:*)",
+      "Bash(./scripts/generate_proto.sh:*)",
+      "Bash(lsof:*)",
+      "Bash(npm run build:*)",
+      "Bash(pnpm type-check:*)",
+      "Bash(pnpm add:*)"
+    ]
+  }
+}

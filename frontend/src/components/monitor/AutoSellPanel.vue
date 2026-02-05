@@ -56,6 +56,7 @@ function getCooldownTime(outcome: string): number {
 }
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
+let isSellLocked = false // 防止 watch 回调重入的单调锁
 
 // 计算是否有任何一个 outcome 开启了自动卖出
 const hasAnyAutoSellEnabled = computed(() => Object.values(autoSellEnabledMap).some(v => v))
@@ -305,8 +306,7 @@ async function executeSell(side: { outcome: string; size: number; avg_price?: nu
 
     await response.json().catch(() => null)
 
-    // 更新状态
-    lastSellTime[side.outcome] = new Date()
+    // 更新统计（lastSellTime 已由调用方前置记录）
     if (!orderStats[side.outcome]) {
       orderStats[side.outcome] = { count: 0, amount: 0 }
     }
@@ -322,31 +322,42 @@ async function executeSell(side: { outcome: string; size: number; avg_price?: nu
 
 // 基于收益率变化触发自动卖出（由 watch polymarketBook 触发）
 async function checkAndAutoSell() {
-  if (!hasAnyAutoSellEnabled.value || isOrdering.value) return
+  // isSellLocked 在任何 await 之前置位，杜绝 watch 回调重入
+  if (isSellLocked || !hasAnyAutoSellEnabled.value) return
   if (!authStore.isAuthenticated) return
   if (!getPrivateKey() || !getProxyAddress()) return
 
-  // 检查每个持仓的收益率
-  const sellableSides: typeof positionSides.value = []
-  for (const side of positionSides.value) {
-    const { canSell, profitRate } = canSellOutcome(side)
-    if (canSell && profitRate !== undefined) {
-      sellableSides.push(side)
-    }
-  }
-
-  if (sellableSides.length === 0) return
-
+  isSellLocked = true
   isOrdering.value = true
   let successCount = 0
 
   try {
+    // 检查每个持仓的收益率
+    const sellableSides: typeof positionSides.value = []
+    for (const side of positionSides.value) {
+      const { canSell, profitRate } = canSellOutcome(side)
+      if (canSell && profitRate !== undefined) {
+        sellableSides.push(side)
+      }
+    }
+
     for (const side of sellableSides) {
+      // 前置记录 lastSellTime，防止同一轮次内并发重复卖出同一 outcome
+      const prevSellTime = lastSellTime[side.outcome] ?? null
+      lastSellTime[side.outcome] = new Date()
+
       const success = await executeSell(side)
       if (success) {
         successCount++
         const profitRate = calculateProfitRate(side.avg_price, getBestBidByOutcome(side.outcome))
         toastStore.showSuccess(`自动卖出 ${side.outcome} 成功 (+${((profitRate ?? 0) * 100).toFixed(1)}%)`)
+      } else {
+        // 下单失败则回滚 lastSellTime，不影响后续重试
+        if (prevSellTime) {
+          lastSellTime[side.outcome] = prevSellTime
+        } else {
+          delete lastSellTime[side.outcome]
+        }
       }
     }
 
@@ -356,6 +367,7 @@ async function checkAndAutoSell() {
       await fetchMarketPositions()
     }
   } finally {
+    isSellLocked = false
     isOrdering.value = false
   }
 }
