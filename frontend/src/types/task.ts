@@ -40,6 +40,7 @@ export interface CreateTaskRequest {
   trade_cooldown_seconds?: number
   private_key?: string | null
   proxy_address?: string | null
+  auto_buy?: AutoBuyConfig
 }
 
 // 创建任务响应
@@ -53,6 +54,10 @@ export interface TaskListResponse {
   tasks: TaskStatus[]
 }
 
+export interface TaskConfigResponse {
+  config: Record<string, unknown>
+}
+
 // 任务结束事件
 export interface TaskEndEventData {
   task_id: string
@@ -62,4 +67,31 @@ export interface TaskEndEventData {
 // 订阅成功事件
 export interface SubscribedEventData {
   task_id: string
+}
+
+export interface AutoBuyStrategyRule {
+  enabled?: boolean
+  side?: string
+  amount?: number
+  round_size?: boolean
+  order_type?: 'GTC' | 'GTD'
+  execution_mode?: 'SIMULATION' | 'REAL'
+  signal_types?: string[]
+}
+
+export interface AutoBuyConfig {
+  enabled?: boolean
+  default?: {
+    amount?: number
+    round_size?: boolean
+    order_type?: 'GTC' | 'GTD'
+    execution_mode?: 'SIMULATION' | 'REAL'
+    private_key?: string | null
+    proxy_address?: string | null
+  }
+  strategy_rules?: Record<string, AutoBuyStrategyRule>
+}
+
+export interface UpdateTaskConfigRequest {
+  patch: Record<string, unknown>
 }

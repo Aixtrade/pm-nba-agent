@@ -76,6 +76,9 @@ export function useSSE() {
     onGameEnd: (data) => {
       gameStore.setGameEnd(data)
     },
+    onAutoBuyState: (data) => {
+      gameStore.setAutoBuyState(data)
+    },
     onTaskEnd: (data) => {
       taskStore.updateTaskState(data.task_id, data.state)
       if (data.task_id === taskStore.currentTaskId) {

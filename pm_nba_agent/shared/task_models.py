@@ -38,6 +38,18 @@ class TaskConfig:
     trade_cooldown_seconds: float = 0.0
     private_key: Optional[str] = None
     proxy_address: Optional[str] = None
+    auto_buy: dict[str, Any] = field(default_factory=lambda: {
+        "enabled": False,
+        "default": {
+            "amount": 10.0,
+            "round_size": False,
+            "order_type": "GTC",
+            "execution_mode": "SIMULATION",
+            "private_key": None,
+            "proxy_address": None,
+        },
+        "strategy_rules": {},
+    })
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
@@ -68,6 +80,7 @@ class TaskConfig:
             trade_cooldown_seconds=float(data.get("trade_cooldown_seconds", 0.0)),
             private_key=data.get("private_key"),
             proxy_address=data.get("proxy_address"),
+            auto_buy=_normalize_auto_buy(data.get("auto_buy")),
         )
 
     @classmethod
@@ -151,3 +164,68 @@ class TaskStatus:
         self.home_team = home_team
         self.away_team = away_team
         self.updated_at = datetime.utcnow().isoformat() + "Z"
+
+
+def _normalize_auto_buy(value: Any) -> dict[str, Any]:
+    """规范化 auto_buy 配置"""
+    base = {
+        "enabled": False,
+        "default": {
+            "amount": 10.0,
+            "round_size": False,
+            "order_type": "GTC",
+            "execution_mode": "SIMULATION",
+            "private_key": None,
+            "proxy_address": None,
+        },
+        "strategy_rules": {},
+    }
+
+    if not isinstance(value, dict):
+        return base
+
+    default_input = value.get("default")
+    if isinstance(default_input, dict):
+        default_cfg = {
+            **base["default"],
+            "amount": float(default_input.get("amount", base["default"]["amount"])),
+            "round_size": bool(default_input.get("round_size", base["default"]["round_size"])),
+            "order_type": str(default_input.get("order_type", base["default"]["order_type"])),
+            "execution_mode": str(default_input.get("execution_mode", base["default"]["execution_mode"])),
+            "private_key": default_input.get("private_key"),
+            "proxy_address": default_input.get("proxy_address"),
+        }
+    else:
+        default_cfg = dict(base["default"])
+
+    strategy_rules: dict[str, Any] = {}
+    raw_rules = value.get("strategy_rules")
+    if isinstance(raw_rules, dict):
+        for strategy_id, raw_rule in raw_rules.items():
+            if not isinstance(strategy_id, str) or not strategy_id:
+                continue
+            if not isinstance(raw_rule, dict):
+                continue
+
+            rule: dict[str, Any] = {
+                "enabled": bool(raw_rule.get("enabled", True)),
+                "side": str(raw_rule.get("side", "__BOTH__")),
+                "signal_types": raw_rule.get("signal_types") or ["BUY"],
+            }
+
+            if raw_rule.get("amount") is not None:
+                rule["amount"] = float(raw_rule.get("amount"))
+            if raw_rule.get("round_size") is not None:
+                rule["round_size"] = bool(raw_rule.get("round_size"))
+            if raw_rule.get("order_type") is not None:
+                rule["order_type"] = str(raw_rule.get("order_type"))
+            if raw_rule.get("execution_mode") is not None:
+                rule["execution_mode"] = str(raw_rule.get("execution_mode"))
+
+            strategy_rules[strategy_id] = rule
+
+    return {
+        "enabled": bool(value.get("enabled", False)),
+        "default": default_cfg,
+        "strategy_rules": strategy_rules,
+    }

@@ -61,6 +61,13 @@ class CreateTaskRequest(BaseModel):
     trade_cooldown_seconds: float = Field(default=0.0, ge=0.0)
     private_key: str | None = Field(default=None)
     proxy_address: str | None = Field(default=None)
+    auto_buy: dict[str, Any] | None = Field(default=None)
+
+
+class UpdateTaskConfigRequest(BaseModel):
+    """更新任务配置请求"""
+
+    patch: dict[str, Any] = Field(default_factory=dict)
 
 
 class CreateTaskResponse(BaseModel):
@@ -87,6 +94,12 @@ class TaskListResponse(BaseModel):
     """任务列表响应"""
 
     tasks: list[TaskStatusResponse]
+
+
+class TaskConfigResponse(BaseModel):
+    """任务配置响应"""
+
+    config: dict[str, Any]
 
 
 @router.post("/create", response_model=CreateTaskResponse)
@@ -130,6 +143,7 @@ async def create_task(
         trade_cooldown_seconds=body.trade_cooldown_seconds,
         private_key=body.private_key,
         proxy_address=body.proxy_address,
+        auto_buy=body.auto_buy or {},
     )
 
     # 保存配置到 Redis
@@ -221,6 +235,21 @@ async def get_task(request: Request, task_id: str) -> TaskStatusResponse:
     )
 
 
+@router.get("/{task_id}/config", response_model=TaskConfigResponse)
+async def get_task_config(request: Request, task_id: str) -> TaskConfigResponse:
+    """获取任务配置"""
+    require_auth(request)
+    redis = require_redis(request)
+
+    config_key = Channels.task_config(task_id)
+    config_data = await redis.get(config_key)
+    if not config_data:
+        raise HTTPException(status_code=404, detail="任务配置不存在")
+
+    config = TaskConfig.from_json(config_data)
+    return TaskConfigResponse(config=config.to_dict())
+
+
 @router.delete("/{task_id}")
 async def cancel_task(request: Request, task_id: str) -> dict[str, str]:
     """
@@ -251,3 +280,50 @@ async def cancel_task(request: Request, task_id: str) -> dict[str, str]:
     await redis.publish(Channels.CONTROL, control_message)
 
     return {"message": "取消请求已发送"}
+
+
+@router.patch("/{task_id}/config")
+async def update_task_config(
+    request: Request,
+    task_id: str,
+    body: UpdateTaskConfigRequest,
+) -> dict[str, str]:
+    """
+    动态更新任务配置
+
+    支持在任务运行中更新参数（例如 auto_buy 开关、选边、策略配置等）。
+    """
+    require_auth(request)
+    redis = require_redis(request)
+
+    config_key = Channels.task_config(task_id)
+    config_data = await redis.get(config_key)
+    if not config_data:
+        raise HTTPException(status_code=404, detail="任务配置不存在")
+
+    config = TaskConfig.from_json(config_data)
+    merged_config = _deep_merge_dict(config.to_dict(), body.patch)
+    config = TaskConfig.from_dict(merged_config)
+
+    await redis.set(config_key, config.to_json(), ex=86400)
+
+    control_message = json.dumps({
+        "action": "update_config",
+        "task_id": task_id,
+        "patch": body.patch,
+    })
+    await redis.publish(Channels.CONTROL, control_message)
+
+    return {"message": "配置更新请求已发送"}
+
+
+def _deep_merge_dict(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    """递归合并字典"""
+    merged = dict(base)
+    for key, value in patch.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge_dict(current, value)
+        else:
+            merged[key] = value
+    return merged

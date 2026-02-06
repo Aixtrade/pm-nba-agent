@@ -188,6 +188,15 @@ class TaskManager:
             elif action == "cancel" and task_id:
                 await self.cancel_task(task_id)
 
+            elif action == "update_config" and task_id:
+                patch = data.get("patch", {})
+                task = self._tasks.get(task_id)
+                if not task:
+                    logger.warning("任务未运行，配置已仅持久化: {}", task_id)
+                    return
+                await task.update_config(patch)
+                logger.info("任务配置已更新: {}", task_id)
+
             elif action == "shutdown":
                 logger.info("收到关闭指令")
                 self._running = False

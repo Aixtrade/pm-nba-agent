@@ -7,6 +7,8 @@ import type {
   CreateTaskResponse,
   TaskListResponse,
   TaskStatus,
+  TaskConfigResponse,
+  UpdateTaskConfigRequest,
 } from '@/types/task'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
@@ -74,6 +76,20 @@ class TaskService {
     return response.json()
   }
 
+  async getTaskConfig(taskId: string, token?: string): Promise<TaskConfigResponse> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/tasks/${taskId}/config`, {
+      method: 'GET',
+      headers: this.getHeaders(token),
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }))
+      throw new Error(error.detail || `获取任务配置失败: ${response.status}`)
+    }
+
+    return response.json()
+  }
+
   /**
    * 取消任务
    */
@@ -86,6 +102,25 @@ class TaskService {
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: response.statusText }))
       throw new Error(error.detail || `取消任务失败: ${response.status}`)
+    }
+
+    return response.json()
+  }
+
+  async updateTaskConfig(
+    taskId: string,
+    request: UpdateTaskConfigRequest,
+    token?: string
+  ): Promise<{ message: string }> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/tasks/${taskId}/config`, {
+      method: 'PATCH',
+      headers: this.getHeaders(token),
+      body: JSON.stringify(request),
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }))
+      throw new Error(error.detail || `更新任务配置失败: ${response.status}`)
     }
 
     return response.json()

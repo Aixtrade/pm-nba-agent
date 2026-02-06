@@ -1,67 +1,46 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useAuthStore, useGameStore } from '@/stores'
-import { autoBuyService, type AutoBuyState } from '@/services/autoBuyService'
+import { computed, ref, watch } from 'vue'
+import { useAuthStore, useGameStore, useTaskStore, useToastStore } from '@/stores'
+import { taskService } from '@/services/taskService'
 
 const BOTH_SIDE = '__BOTH__'
+const STRATEGY_ID = 'merge_long'
 
 const authStore = useAuthStore()
 const gameStore = useGameStore()
+const taskStore = useTaskStore()
+const toastStore = useToastStore()
 
-// 服务状态（响应式）
-const serviceState = ref<AutoBuyState>(autoBuyService.getState())
+const requestPending = ref(false)
+const formSide = ref(BOTH_SIDE)
+const formAmount = ref(10)
+const formRoundSize = ref(false)
+const formEnabled = ref(false)
 
-// 订阅服务状态变化
-let unsubscribe: (() => void) | null = null
-
-onMounted(() => {
-  unsubscribe = autoBuyService.onStateChange((state) => {
-    serviceState.value = state
-  })
-})
-
-onUnmounted(() => {
-  unsubscribe?.()
-})
-
-// 计算属性
 const polymarketInfo = computed(() => gameStore.polymarketInfo)
+const autoBuyState = computed(() => gameStore.autoBuyState)
+const currentTaskId = computed(() => taskStore.currentTaskId)
 
-// 可用的 outcome 列表
 const availableOutcomes = computed(() => {
   const info = polymarketInfo.value
   if (!info) return []
-  return info.tokens.map(token => token.outcome)
-})
-
-// 当前选中的 outcome 是否有效
-const isValidSide = computed(() => {
-  if (serviceState.value.config.side === BOTH_SIDE) return true
-  return availableOutcomes.value.includes(serviceState.value.config.side)
-})
-
-// 当市场信息变化时，如果当前选择无效，重置为双边
-watch(availableOutcomes, (outcomes) => {
-  if (outcomes.length > 0 && !isValidSide.value) {
-    autoBuyService.setConfig({ side: BOTH_SIDE })
-  }
+  return info.tokens.map((token) => token.outcome)
 })
 
 const statusText = computed(() => {
-  if (!serviceState.value.enabled) return '已关闭'
-  if (serviceState.value.isOrdering) return '下单中...'
+  if (!autoBuyState.value?.enabled) return '已关闭'
+  if (autoBuyState.value.is_ordering) return '下单中...'
   return '等待信号'
 })
 
 const statusClass = computed(() => {
-  if (!serviceState.value.enabled) return 'text-base-content/50'
-  if (serviceState.value.isOrdering) return 'text-warning'
+  if (!autoBuyState.value?.enabled) return 'text-base-content/50'
+  if (autoBuyState.value.is_ordering) return 'text-warning'
   return 'text-success'
 })
 
-// 最新信号显示
 const latestSignalText = computed(() => {
-  const sig = gameStore.getLatestSignalForStrategy('merge_long')
+  const sig = gameStore.getLatestSignalForStrategy(STRATEGY_ID)
   if (!sig?.signal) return '--'
   const type = sig.signal.type
   const labels: Record<string, string> = { BUY: '买入', SELL: '卖出', HOLD: '等待' }
@@ -69,15 +48,64 @@ const latestSignalText = computed(() => {
 })
 
 const latestSignalClass = computed(() => {
-  const type = gameStore.getLatestSignalForStrategy('merge_long')?.signal?.type
+  const type = gameStore.getLatestSignalForStrategy(STRATEGY_ID)?.signal?.type
   if (type === 'BUY') return 'text-success'
   if (type === 'SELL') return 'text-error'
   return 'text-base-content/50'
 })
 
-// 格式化时间
-function formatTime(date: Date | null): string {
-  if (!date) return '--'
+const hasStats = computed(() => {
+  return Object.keys(autoBuyState.value?.stats ?? {}).length > 0
+})
+
+const statsDisplay = computed(() => {
+  const stats = autoBuyState.value?.stats ?? {}
+  const entries = Object.entries(stats)
+  if (entries.length === 0) return '--'
+  return entries
+    .map(([outcome, stat]) => `${outcome} x${stat.count} ($${stat.amount.toFixed(0)})`)
+    .join(', ')
+})
+
+watch(autoBuyState, (next) => {
+  if (!next) return
+
+  formEnabled.value = !!next.enabled
+  const defaultCfg = (next.default ?? {}) as Record<string, unknown>
+  if (typeof defaultCfg.amount === 'number') {
+    formAmount.value = defaultCfg.amount
+  }
+  if (typeof defaultCfg.round_size === 'boolean') {
+    formRoundSize.value = defaultCfg.round_size
+  }
+
+  const rule = next.strategy_rules?.[STRATEGY_ID] as Record<string, unknown> | undefined
+  if (!rule) return
+
+  const side = typeof rule.side === 'string' ? rule.side : BOTH_SIDE
+  const amount = typeof rule.amount === 'number' ? rule.amount : formAmount.value
+  const roundSize = typeof rule.round_size === 'boolean' ? rule.round_size : formRoundSize.value
+
+  formSide.value = side
+  formAmount.value = amount
+  formRoundSize.value = roundSize
+}, { immediate: true })
+
+watch(availableOutcomes, (outcomes) => {
+  if (formSide.value === BOTH_SIDE) return
+  if (outcomes.includes(formSide.value)) return
+  formSide.value = BOTH_SIDE
+  void pushConfigPatch()
+})
+
+watch(currentTaskId, () => {
+  void loadTaskConfig()
+}, { immediate: true })
+
+function formatTime(value: string | null | undefined): string {
+  if (!value) return '--'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '--'
   return date.toLocaleTimeString('zh-CN', {
     hour: '2-digit',
     minute: '2-digit',
@@ -85,103 +113,155 @@ function formatTime(date: Date | null): string {
   })
 }
 
-// 统计是否有数据
-const hasStats = computed(() => {
-  return Object.keys(serviceState.value.stats).length > 0
-})
+function getSideButtonClass(side: string): string {
+  if (formSide.value !== side) return 'btn-ghost'
+  if (side === BOTH_SIDE) return 'btn-primary'
+  const index = availableOutcomes.value.indexOf(side)
+  return index === 0 ? 'btn-success' : 'btn-error'
+}
 
-// 格式化统计显示
-const statsDisplay = computed(() => {
-  const entries = Object.entries(serviceState.value.stats)
-  if (entries.length === 0) return '--'
-  return entries
-    .map(([outcome, stat]) => `${outcome} x${stat.count} ($${stat.amount.toFixed(0)})`)
-    .join(', ')
-})
+async function loadTaskConfig() {
+  if (!currentTaskId.value || !authStore.token) return
 
-// 操作方法
+  try {
+    const response = await taskService.getTaskConfig(currentTaskId.value, authStore.token)
+    const config = (response.config ?? {}) as Record<string, unknown>
+    const autoBuy = (config.auto_buy ?? {}) as Record<string, unknown>
+    const defaultCfg = (autoBuy.default ?? {}) as Record<string, unknown>
+    const strategyRules = (autoBuy.strategy_rules ?? {}) as Record<string, unknown>
+    const rule = (strategyRules[STRATEGY_ID] ?? {}) as Record<string, unknown>
+
+    if (typeof autoBuy.enabled === 'boolean') {
+      formEnabled.value = autoBuy.enabled
+    }
+    if (typeof defaultCfg.amount === 'number') {
+      formAmount.value = defaultCfg.amount
+    }
+    if (typeof defaultCfg.round_size === 'boolean') {
+      formRoundSize.value = defaultCfg.round_size
+    }
+    if (typeof rule.side === 'string') {
+      formSide.value = rule.side
+    }
+    if (typeof rule.amount === 'number') {
+      formAmount.value = rule.amount
+    }
+    if (typeof rule.round_size === 'boolean') {
+      formRoundSize.value = rule.round_size
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '加载自动买入配置失败'
+    toastStore.showWarning(message)
+  }
+}
+
+async function pushConfigPatch() {
+  if (!currentTaskId.value) {
+    toastStore.showWarning('请先创建并订阅任务')
+    return
+  }
+  if (!authStore.token) {
+    toastStore.showWarning('请先登录')
+    return
+  }
+
+  requestPending.value = true
+  try {
+    await taskService.updateTaskConfig(
+      currentTaskId.value,
+      {
+        patch: {
+          auto_buy: {
+            enabled: formEnabled.value,
+            strategy_rules: {
+              [STRATEGY_ID]: {
+                enabled: formEnabled.value,
+                side: formSide.value,
+                amount: formAmount.value,
+                round_size: formRoundSize.value,
+                signal_types: ['BUY'],
+              },
+            },
+          },
+        },
+      },
+      authStore.token,
+    )
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '更新自动买入配置失败'
+    toastStore.showError(message)
+  } finally {
+    requestPending.value = false
+  }
+}
+
 function toggleEnabled(event: Event) {
-  const checked = (event.target as HTMLInputElement).checked
-  autoBuyService.setEnabled(checked)
+  formEnabled.value = (event.target as HTMLInputElement).checked
+  void pushConfigPatch()
 }
 
 function selectSide(side: string) {
-  if (!serviceState.value.enabled) {
-    autoBuyService.setConfig({ side })
-  }
+  formSide.value = side
+  void pushConfigPatch()
 }
 
 function updateAmount(event: Event) {
   const value = Number((event.target as HTMLInputElement).value)
-  if (value > 0) {
-    autoBuyService.setConfig({ amount: value })
-  }
+  if (value <= 0) return
+  formAmount.value = value
+  void pushConfigPatch()
 }
 
 function toggleRoundSize(event: Event) {
-  const checked = (event.target as HTMLInputElement).checked
-  autoBuyService.setConfig({ roundSize: checked })
+  formRoundSize.value = (event.target as HTMLInputElement).checked
+  void pushConfigPatch()
 }
 
 function resetStats() {
-  autoBuyService.resetStats()
-}
-
-// 获取按钮样式
-function getSideButtonClass(side: string): string {
-  if (serviceState.value.config.side !== side) return 'btn-ghost'
-  if (side === BOTH_SIDE) return 'btn-primary'
-  const index = availableOutcomes.value.indexOf(side)
-  return index === 0 ? 'btn-success' : 'btn-error'
+  toastStore.showInfo('统计由后台维护，重置功能待接入')
 }
 </script>
 
 <template>
   <div class="card glass-card ring-1 ring-base-content/30 ring-offset-2 ring-offset-base-100">
     <div class="card-body">
-      <!-- 标题与开关 -->
       <div class="flex items-center justify-between">
         <h3 class="card-title text-base">自动买入</h3>
         <input
           type="checkbox"
           class="toggle toggle-success"
-          :checked="serviceState.enabled"
-          :disabled="!polymarketInfo"
+          :checked="formEnabled"
+          :disabled="!polymarketInfo || !currentTaskId || requestPending"
           @change="toggleEnabled"
         />
       </div>
 
-      <!-- 配置区域 -->
       <div class="mt-4 space-y-3">
-        <!-- 下单方向 -->
         <div class="flex items-center gap-3">
           <span class="text-sm text-base-content/70 w-16">方向</span>
           <div class="join">
-            <!-- 第一个 outcome -->
             <button
               v-if="availableOutcomes[0]"
               class="btn btn-sm join-item"
               :class="getSideButtonClass(availableOutcomes[0])"
-              :disabled="serviceState.enabled"
+              :disabled="requestPending || !currentTaskId"
               @click="selectSide(availableOutcomes[0])"
             >
               {{ availableOutcomes[0] }}
             </button>
-            <!-- 双边按钮（中间） -->
             <button
               class="btn btn-sm join-item"
               :class="getSideButtonClass(BOTH_SIDE)"
-              :disabled="serviceState.enabled"
+              :disabled="requestPending || !currentTaskId"
               @click="selectSide(BOTH_SIDE)"
             >
               双边
             </button>
-            <!-- 第二个 outcome -->
             <button
               v-if="availableOutcomes[1]"
               class="btn btn-sm join-item"
               :class="getSideButtonClass(availableOutcomes[1])"
-              :disabled="serviceState.enabled"
+              :disabled="requestPending || !currentTaskId"
               @click="selectSide(availableOutcomes[1])"
             >
               {{ availableOutcomes[1] }}
@@ -189,7 +269,6 @@ function getSideButtonClass(side: string): string {
           </div>
         </div>
 
-        <!-- 下单金额 -->
         <div class="flex items-center gap-3">
           <span class="text-sm text-base-content/70 w-16">金额</span>
           <input
@@ -197,22 +276,21 @@ function getSideButtonClass(side: string): string {
             min="1"
             step="1"
             class="input input-bordered input-sm w-24"
-            :value="serviceState.config.amount"
-            :disabled="serviceState.enabled"
+            :value="formAmount"
+            :disabled="requestPending || !currentTaskId"
             @change="updateAmount"
           />
           <span class="text-sm text-base-content/60">USDC</span>
         </div>
 
-        <!-- Size 取整 -->
         <div class="flex items-center gap-3">
           <span class="text-sm text-base-content/70 w-16">取整</span>
           <label class="flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
               class="checkbox checkbox-sm"
-              :checked="serviceState.config.roundSize"
-              :disabled="serviceState.enabled"
+              :checked="formRoundSize"
+              :disabled="requestPending || !currentTaskId"
               @change="toggleRoundSize"
             />
             <span class="text-sm text-base-content/60">Size 取整数</span>
@@ -220,16 +298,13 @@ function getSideButtonClass(side: string): string {
         </div>
       </div>
 
-      <!-- 状态区域 -->
       <div class="mt-4 rounded-lg border border-base-200/70 px-3 py-2 ring-1 ring-base-content/20">
         <div class="grid grid-cols-2 gap-2 text-xs">
-          <!-- 状态 -->
           <div>
             <div class="text-base-content/50">状态</div>
             <div class="font-medium" :class="statusClass">{{ statusText }}</div>
           </div>
 
-          <!-- 最新信号 -->
           <div>
             <div class="text-base-content/50">最新信号</div>
             <div class="font-medium" :class="latestSignalClass">
@@ -237,13 +312,11 @@ function getSideButtonClass(side: string): string {
             </div>
           </div>
 
-          <!-- 上次下单 -->
           <div>
             <div class="text-base-content/50">上次下单</div>
-            <div class="font-medium text-base-content">{{ formatTime(serviceState.lastOrderTime) }}</div>
+            <div class="font-medium text-base-content">{{ formatTime(autoBuyState?.last_order_time) }}</div>
           </div>
 
-          <!-- 累计统计 -->
           <div>
             <div class="text-base-content/50">累计</div>
             <div class="font-medium text-base-content text-[11px]">
@@ -252,7 +325,6 @@ function getSideButtonClass(side: string): string {
           </div>
         </div>
 
-        <!-- 重置按钮 -->
         <div v-if="hasStats" class="mt-2 text-right">
           <button
             class="btn btn-ghost btn-xs text-base-content/50"
@@ -263,12 +335,12 @@ function getSideButtonClass(side: string): string {
         </div>
       </div>
 
-      <!-- 未连接提示 -->
-      <div v-if="!polymarketInfo" class="mt-3 text-xs text-amber-600/80">
+      <div v-if="!currentTaskId" class="mt-3 text-xs text-amber-600/80">
+        请先创建并订阅任务
+      </div>
+      <div v-else-if="!polymarketInfo" class="mt-3 text-xs text-amber-600/80">
         请先连接到 Polymarket 比赛
       </div>
-
-      <!-- 未登录提示 -->
       <div v-else-if="!authStore.isAuthenticated" class="mt-3 text-xs text-amber-600/80">
         请先登录
       </div>

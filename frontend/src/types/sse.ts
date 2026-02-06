@@ -171,6 +171,16 @@ export interface StrategySignalEventData {
   timestamp: string
 }
 
+export interface AutoBuyStateEventData {
+  enabled: boolean
+  is_ordering: boolean
+  last_order_time?: string | null
+  stats: Record<string, { count: number; amount: number }>
+  default?: Record<string, unknown>
+  strategy_rules?: Record<string, unknown>
+  timestamp: string
+}
+
 // SSE 事件类型
 export type SSEEventType =
   | 'scoreboard'
@@ -186,6 +196,7 @@ export type SSEEventType =
   | 'task_status'
   | 'task_end'
   | 'subscribed'
+  | 'auto_buy_state'
 
 // SSE 事件处理器
 export interface SSEEventHandlers {
@@ -198,6 +209,7 @@ export interface SSEEventHandlers {
   onStrategySignal?: (data: StrategySignalEventData) => void
   onError?: (data: ErrorEventData) => void
   onGameEnd?: (data: GameEndEventData) => void
+  onAutoBuyState?: (data: AutoBuyStateEventData) => void
   onOpen?: () => void
   onClose?: () => void
 }

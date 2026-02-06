@@ -302,6 +302,9 @@ export class SSEService {
         case 'subscribed':
           this.handlers.onSubscribed?.(parsed)
           break
+        case 'auto_buy_state':
+          this.handlers.onAutoBuyState?.(parsed)
+          break
         default:
           console.warn('Unknown event type:', eventType)
       }
