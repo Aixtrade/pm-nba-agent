@@ -46,7 +46,7 @@ class LiveStreamRequest(BaseModel):
         description="AI 分析间隔（秒），范围 10-120"
     )
 
-    # 策略相关参数
+    # 策略相关参数（单策略，向后兼容）
     strategy_id: str | None = Field(
         default=None,
         description="策略 ID（如 merge_long, locked_profit），默认 merge_long"
@@ -55,10 +55,32 @@ class LiveStreamRequest(BaseModel):
         default=None,
         description="策略参数，如 {target_profit: 0.0}"
     )
+
+    # 多策略参数（优先级高于 strategy_id）
+    strategy_ids: list[str] | None = Field(
+        default=None,
+        description="多策略 ID 列表，如 ['merge_long', 'locked_profit']"
+    )
+    strategy_params_map: dict[str, dict] | None = Field(
+        default=None,
+        description="按策略 ID 映射的参数，如 {'merge_long': {}, 'locked_profit': {target_profit: 0.05}}"
+    )
+
     proxy_address: str | None = Field(
         default=None,
         description="Polymarket 代理地址（0x 开头），用于获取实时持仓"
     )
+
+    def get_effective_strategy_configs(self) -> list[tuple[str, dict]]:
+        """统一解析策略配置，返回 [(strategy_id, params), ...]
+
+        优先使用 strategy_ids（多策略），否则回退到 strategy_id（单策略）。
+        """
+        if self.strategy_ids:
+            pm = self.strategy_params_map or {}
+            return [(sid, pm.get(sid, {})) for sid in self.strategy_ids]
+        sid = (self.strategy_id or "merge_long").strip() or "merge_long"
+        return [(sid, self.strategy_params or {})]
 
     @field_validator('url')
     @classmethod

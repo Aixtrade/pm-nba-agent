@@ -111,9 +111,38 @@ export const useGameStore = defineStore('game', () => {
   const polymarketInfo = ref<PolymarketInfoEventData | null>(null)
   const polymarketBook = ref<Record<string, BookPriceSnapshot>>({})
   const polymarketBookUpdatedAt = ref<string | null>(null)
-  const strategySignals = ref<StrategySignalEventData[]>([])
-  const latestStrategySignal = ref<StrategySignalEventData | null>(null)
+  // 按策略分组的信号存储
+  const strategySignalsByStrategy = ref<Record<string, StrategySignalEventData[]>>({})
+  const latestSignalByStrategy = ref<Record<string, StrategySignalEventData | null>>({})
   const MAX_STRATEGY_SIGNALS = 20
+
+  // 向后兼容的 computed
+  const latestStrategySignal = computed<StrategySignalEventData | null>(() => {
+    let newest: StrategySignalEventData | null = null
+    for (const sig of Object.values(latestSignalByStrategy.value)) {
+      if (!sig) continue
+      if (!newest || sig.timestamp > newest.timestamp) newest = sig
+    }
+    return newest
+  })
+  const strategySignals = computed<StrategySignalEventData[]>(() => {
+    const all: StrategySignalEventData[] = []
+    for (const list of Object.values(strategySignalsByStrategy.value)) {
+      all.push(...list)
+    }
+    return all.sort((a, b) => (b.timestamp > a.timestamp ? 1 : -1))
+  })
+
+  // 按策略查询
+  function getSignalsForStrategy(id: string): StrategySignalEventData[] {
+    return strategySignalsByStrategy.value[id] ?? []
+  }
+  function getLatestSignalForStrategy(id: string): StrategySignalEventData | null {
+    return latestSignalByStrategy.value[id] ?? null
+  }
+  const activeStrategyIds = computed(() =>
+    Object.keys(latestSignalByStrategy.value).filter(k => latestSignalByStrategy.value[k] !== null)
+  )
 
   // 持仓状态
   const positionSides = ref<
@@ -277,19 +306,25 @@ export const useGameStore = defineStore('game', () => {
   }
 
   function addStrategySignal(data: StrategySignalEventData) {
-    // 始终更新最新信号（用于显示，包括 HOLD）
-    latestStrategySignal.value = data
+    const sid = data.strategy?.id ?? '_unknown_'
 
-    // 只有 BUY/SELL 信号保存到历史列表
+    // 始终更新该策略的最新信号（包括 HOLD）
+    latestSignalByStrategy.value = { ...latestSignalByStrategy.value, [sid]: data }
+
+    // 只有 BUY/SELL 信号保存到该策略的历史列表
     const signalType = data.signal?.type
     if (signalType === 'BUY' || signalType === 'SELL') {
-      strategySignals.value = [data, ...strategySignals.value.slice(0, MAX_STRATEGY_SIGNALS - 1)]
+      const prev = strategySignalsByStrategy.value[sid] ?? []
+      strategySignalsByStrategy.value = {
+        ...strategySignalsByStrategy.value,
+        [sid]: [data, ...prev.slice(0, MAX_STRATEGY_SIGNALS - 1)],
+      }
     }
   }
 
   function clearStrategySignals() {
-    strategySignals.value = []
-    latestStrategySignal.value = null
+    strategySignalsByStrategy.value = {}
+    latestSignalByStrategy.value = {}
   }
 
   function setPositionSides(
@@ -317,8 +352,8 @@ export const useGameStore = defineStore('game', () => {
     polymarketInfo.value = null
     polymarketBook.value = {}
     polymarketBookUpdatedAt.value = null
-    strategySignals.value = []
-    latestStrategySignal.value = null
+    strategySignalsByStrategy.value = {}
+    latestSignalByStrategy.value = {}
     positionSides.value = []
     positionsLoading.value = false
     positionsUpdatedAt.value = null
@@ -335,6 +370,11 @@ export const useGameStore = defineStore('game', () => {
     polymarketBookUpdatedAt,
     strategySignals,
     latestStrategySignal,
+    strategySignalsByStrategy,
+    latestSignalByStrategy,
+    activeStrategyIds,
+    getSignalsForStrategy,
+    getLatestSignalForStrategy,
     positionSides,
     positionsLoading,
     positionsUpdatedAt,

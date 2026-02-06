@@ -172,6 +172,7 @@ class StrategySignalEvent(SSEEvent):
         yes_price: Optional[float] = None,
         no_price: Optional[float] = None,
         metadata: Optional[dict] = None,
+        metrics: Optional[list[dict[str, Any]]] = None,
     ) -> "StrategySignalEvent":
         return cls(data={
             "signal": {
@@ -187,6 +188,7 @@ class StrategySignalEvent(SSEEvent):
             "position": position,
             "execution": execution,
             "strategy": {"id": strategy_id} if strategy_id else None,
+            "metrics": metrics or [],
             "timestamp": datetime.utcnow().isoformat(),
         })
 

@@ -61,7 +61,7 @@ const statusClass = computed(() => {
 
 // 最新信号显示
 const latestSignalText = computed(() => {
-  const sig = gameStore.latestStrategySignal
+  const sig = gameStore.getLatestSignalForStrategy('merge_long')
   if (!sig?.signal) return '--'
   const type = sig.signal.type
   const labels: Record<string, string> = { BUY: '买入', SELL: '卖出', HOLD: '等待' }
@@ -69,7 +69,7 @@ const latestSignalText = computed(() => {
 })
 
 const latestSignalClass = computed(() => {
-  const type = gameStore.latestStrategySignal?.signal?.type
+  const type = gameStore.getLatestSignalForStrategy('merge_long')?.signal?.type
   if (type === 'BUY') return 'text-success'
   if (type === 'SELL') return 'text-error'
   return 'text-base-content/50'

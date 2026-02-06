@@ -35,6 +35,15 @@ interface ExecutionData {
   error?: string | null
 }
 
+interface MetricData {
+  key: string
+  label: string
+  value: string | number | boolean | null
+  unit?: string
+  semantic?: 'higher_better' | 'lower_better' | 'neutral'
+  priority?: number
+}
+
 interface SignalEvent {
   event_type: 'signal' | 'order' | 'error' | 'status'
   timestamp: string
@@ -42,6 +51,7 @@ interface SignalEvent {
   market?: MarketData
   execution?: ExecutionData
   strategy?: { id: string }
+  metrics?: MetricData[]
   error?: string | null
 }
 
@@ -59,10 +69,14 @@ const props = withDefaults(
 
 const latestSignal = computed(() => props.signals[0] ?? null)
 const signalHistory = computed(() => props.signals.slice(1, props.maxHistory))
+const MAX_METRICS = 3
 
-const hasArbitrageOpportunity = computed(() => {
-  const priceSum = latestSignal.value?.market?.price_sum
-  return priceSum != null && priceSum < 1
+const topMetrics = computed(() => {
+  const metrics = latestSignal.value?.metrics
+  if (!metrics || metrics.length === 0) return []
+  return [...metrics]
+    .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
+    .slice(0, MAX_METRICS)
 })
 
 function signalTypeLabel(type?: string): string {
@@ -103,6 +117,13 @@ function formatSize(v?: number | null): string {
   if (v == null || Number.isNaN(v)) return '--'
   return v.toFixed(2)
 }
+
+function formatMetricValue(v: MetricData['value']): string {
+  if (v == null) return '--'
+  if (typeof v === 'number') return v.toFixed(2)
+  if (typeof v === 'boolean') return v ? 'true' : 'false'
+  return String(v)
+}
 </script>
 
 <template>
@@ -120,7 +141,7 @@ function formatSize(v?: number | null): string {
 
       <!-- 最新信号 -->
       <div v-if="latestSignal" class="mt-3">
-        <!-- 信号主行：徽章 + reason + 价格和 -->
+        <!-- 信号主行：徽章 + reason -->
         <div class="flex items-center gap-2">
           <span
             class="badge badge-sm shrink-0 font-medium"
@@ -131,13 +152,20 @@ function formatSize(v?: number | null): string {
           <span class="flex-1 text-sm text-base-content/80 truncate">
             {{ latestSignal.signal?.reason }}
           </span>
-          <span
-            v-if="latestSignal.market"
-            class="shrink-0 text-xs font-medium"
-            :class="hasArbitrageOpportunity ? 'text-success' : 'text-base-content/50'"
+        </div>
+
+        <!-- 策略指标（仅当 metrics 存在时显示） -->
+        <div v-if="topMetrics.length > 0" class="mt-2 flex flex-wrap gap-2 pl-14">
+          <div
+            v-for="metric in topMetrics"
+            :key="metric.key"
+            class="badge badge-outline badge-sm"
           >
-            Σ {{ formatPrice(latestSignal.market.price_sum) }}
-          </span>
+            <span class="text-base-content/60 mr-1">{{ metric.label }}</span>
+            <span class="font-medium">
+              {{ formatMetricValue(metric.value) }}<span v-if="metric.unit">{{ metric.unit }}</span>
+            </span>
+          </div>
         </div>
 
         <!-- BUY/SELL 信号展开详情 -->

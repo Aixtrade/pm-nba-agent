@@ -12,6 +12,9 @@ export interface LiveStreamRequest {
   include_scoreboard?: boolean
   include_boxscore?: boolean
   analysis_interval?: number
+  strategy_ids?: string[]
+  strategy_params_map?: Record<string, Record<string, unknown>>
+  proxy_address?: string
 }
 
 // Scoreboard 事件数据
@@ -157,6 +160,14 @@ export interface StrategySignalEventData {
   strategy?: {
     id: string
   }
+  metrics?: Array<{
+    key: string
+    label: string
+    value: string | number | boolean | null
+    unit?: string
+    semantic?: 'higher_better' | 'lower_better' | 'neutral'
+    priority?: number
+  }>
   timestamp: string
 }
 

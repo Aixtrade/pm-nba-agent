@@ -128,12 +128,13 @@ class AutoBuyService {
     this.notifyStateChange()
   }
 
-  // 处理策略信号
+  // 处理策略信号（仅响应 merge_long 策略的 BUY 信号）
   private handleSignal = (signal: StrategySignalEventData) => {
     if (!this.enabled) return
     if (signal.signal?.type !== 'BUY') return
+    if (signal.strategy?.id && signal.strategy.id !== 'merge_long') return
 
-    console.log('[AutoBuyService] 收到 BUY 信号，执行下单', signal.timestamp)
+    console.log('[AutoBuyService] 收到 merge_long BUY 信号，执行下单', signal.timestamp)
     this.executeOrder(signal)
   }
 

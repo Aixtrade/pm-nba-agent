@@ -41,11 +41,10 @@ from ...models.game_data import GameData
 @dataclass
 class StrategyState:
     """策略执行状态（仅用于信号生成，不执行下单）"""
-    strategy_id: str = "merge_long"
     yes_token_id: str = ""
     no_token_id: str = ""
     position: PositionContext = None  # type: ignore
-    strategy_params: dict[str, Any] = field(default_factory=dict)
+    strategy_configs: list[tuple[str, dict[str, Any]]] = field(default_factory=lambda: [("merge_long", {})])
     # 订单簿缓存
     yes_bids: list[OrderLevel] = None  # type: ignore
     yes_asks: list[OrderLevel] = None  # type: ignore
@@ -62,8 +61,6 @@ class StrategyState:
     def __post_init__(self):
         if self.position is None:
             self.position = PositionContext()
-        if self.strategy_params is None:
-            self.strategy_params = {}
         if self.yes_bids is None:
             self.yes_bids = []
         if self.yes_asks is None:
@@ -361,9 +358,10 @@ class GameStreamService:
                                     request,
                                 )
                                 if strategy_state:
+                                    strategy_id_list = [s[0] for s in strategy_state.strategy_configs]
                                     logger.info(
                                         "策略已初始化: {}, YES={}..., NO={}...",
-                                        strategy_state.strategy_id,
+                                        strategy_id_list,
                                         strategy_state.yes_token_id[:8],
                                         strategy_state.no_token_id[:8],
                                     )
@@ -769,8 +767,7 @@ def _init_strategy_state(
         return None
 
     # 获取请求参数
-    strategy_id = str(request.strategy_id or "merge_long").strip() or "merge_long"
-    strategy_params = request.strategy_params or {}
+    strategy_configs = request.get_effective_strategy_configs()
     proxy_address = str(request.proxy_address or "").strip()
     condition_id = event_info.condition_id or ""
 
@@ -779,10 +776,9 @@ def _init_strategy_state(
         condition_id = event_info.market_info.condition_id or ""
 
     return StrategyState(
-        strategy_id=strategy_id,
         yes_token_id=yes_token_id,
         no_token_id=no_token_id,
-        strategy_params=strategy_params,
+        strategy_configs=strategy_configs,
         proxy_address=proxy_address,
         condition_id=condition_id,
     )
@@ -874,64 +870,38 @@ async def _build_polymarket_events(
 
             # price_change 事件也执行策略
             if events:
-                signal_event = await _execute_strategy(message, strategy_state, snapshot=snapshot)
-                if signal_event:
-                    events.append(signal_event)
+                signal_events = await _execute_strategies(message, strategy_state, snapshot=snapshot)
+                events.extend(signal_events)
                 return events
 
     events = [PolymarketBookEvent.create(payload).to_sse()]
 
     if strategy_state and isinstance(message, dict):
-        signal_event = await _execute_strategy(message, strategy_state, snapshot=snapshot)
-        if signal_event:
-            events.append(signal_event)
+        signal_events = await _execute_strategies(message, strategy_state, snapshot=snapshot)
+        events.extend(signal_events)
 
     return events
 
 
-async def _execute_strategy(
+async def _execute_strategies(
     message: dict[str, Any],
     strategy_state: StrategyState,
     snapshot: Optional[MarketSnapshot] = None,
-) -> Optional[str]:
-    """执行策略并返回信号事件（仅生成信号，不执行下单）"""
+) -> list[str]:
+    """对所有配置的策略执行信号生成，返回 SSE 事件列表"""
     if snapshot is None:
-        # 更新订单簿
         strategy_state.update_book(message)
-
-        # 构建快照
         snapshot = strategy_state.build_snapshot()
     if snapshot is None:
-        return None
+        return []
 
-    # 获取策略
-    strategy = StrategyRegistry.get(strategy_state.strategy_id)
-    if strategy is None:
-        return None
-
-    # 获取最新持仓（如果配置了 proxy_address）
+    # 共享：刷新持仓一次
     await strategy_state.refresh_position()
 
-    # 构建上下文
+    # 共享：构建 OrderBookContext 一次
     order_book = OrderBookContext.from_snapshot(snapshot)
-    params = strategy_state.strategy_params or {}
 
-    # 生成信号
-    try:
-        signal = strategy.generate_signal(
-            snapshot=snapshot,
-            order_book=order_book,
-            position=strategy_state.position,
-            params=params,
-        )
-    except Exception as exc:
-        logger.warning("策略执行失败: {}", exc)
-        return None
-
-    if signal is None:
-        return None
-
-    # 构建市场数据
+    # 共享：构建市场数据一次
     market_data = {
         "yes_price": snapshot.yes_data.price,
         "no_price": snapshot.no_data.price,
@@ -942,20 +912,124 @@ async def _execute_strategy(
         "no_best_ask": snapshot.no_data.best_ask,
     }
 
-    # 构建持仓数据
+    # 共享：构建持仓数据一次
     position_data = strategy_state.position.to_dict()
 
-    # 仅生成信号，不执行下单
-    return StrategySignalEvent.create(
-        signal_type=signal.signal_type.value,
-        reason=signal.reason,
-        market=market_data,
-        position=position_data,
-        execution=None,
-        strategy_id=strategy_state.strategy_id,
-        yes_size=signal.yes_size,
-        no_size=signal.no_size,
-        yes_price=signal.yes_price,
-        no_price=signal.no_price,
-        metadata=signal.metadata,
-    ).to_sse()
+    results: list[str] = []
+
+    for strategy_id, params in strategy_state.strategy_configs:
+        strategy = StrategyRegistry.get(strategy_id)
+        if strategy is None:
+            continue
+
+        try:
+            signal = strategy.generate_signal(
+                snapshot=snapshot,
+                order_book=order_book,
+                position=strategy_state.position,
+                params=params,
+            )
+        except Exception as exc:
+            logger.warning("策略 {} 执行失败: {}", strategy_id, exc)
+            continue
+
+        if signal is None:
+            continue
+
+        results.append(
+            StrategySignalEvent.create(
+                signal_type=signal.signal_type.value,
+                reason=signal.reason,
+                market=market_data,
+                position=position_data,
+                execution=None,
+                strategy_id=strategy_id,
+                yes_size=signal.yes_size,
+                no_size=signal.no_size,
+                yes_price=signal.yes_price,
+                no_price=signal.no_price,
+                metadata=signal.metadata,
+                metrics=_build_signal_metrics(strategy_id, signal.metadata),
+            ).to_sse()
+        )
+
+    return results
+
+
+def _build_signal_metrics(
+    strategy_id: str,
+    metadata: Optional[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """将策略 metadata 映射为前端展示的通用 metrics。"""
+    md = metadata or {}
+
+    provided_metrics = md.get("metrics")
+    if isinstance(provided_metrics, list):
+        normalized = [_normalize_metric_item(item) for item in provided_metrics]
+        return [m for m in normalized if m is not None]
+
+    metric_specs: list[tuple[str, str, str, int]]
+    if strategy_id == "merge_long":
+        metric_specs = [
+            ("expected_profit_pct", "预期利润", "%", 100),
+            ("long_cost", "成本", "", 90),
+            ("threshold", "阈值", "", 80),
+        ]
+    elif strategy_id == "locked_profit":
+        metric_specs = [
+            ("new_locked_profit", "新锁定利润", "USD", 100),
+            ("locked_profit", "当前锁定利润", "USD", 90),
+            ("target_profit", "目标利润", "USD", 80),
+        ]
+    else:
+        return []
+
+    metrics: list[dict[str, Any]] = []
+    for key, label, unit, priority in metric_specs:
+        value = md.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, (int, float, str, bool)):
+            continue
+        metrics.append(
+            {
+                "key": key,
+                "label": label,
+                "value": value,
+                "unit": unit or None,
+                "priority": priority,
+            }
+        )
+    return metrics
+
+
+def _normalize_metric_item(item: Any) -> Optional[dict[str, Any]]:
+    """规范化单条 metric，过滤非法项。"""
+    if not isinstance(item, dict):
+        return None
+    key = item.get("key")
+    label = item.get("label")
+    value = item.get("value")
+    if not isinstance(key, str) or not key:
+        return None
+    if not isinstance(label, str) or not label:
+        return None
+    if value is not None and not isinstance(value, (int, float, str, bool)):
+        return None
+
+    unit = item.get("unit")
+    semantic = item.get("semantic")
+    priority = item.get("priority")
+
+    metric: dict[str, Any] = {
+        "key": key,
+        "label": label,
+        "value": value,
+    }
+    if isinstance(unit, str) and unit:
+        metric["unit"] = unit
+    if isinstance(semantic, str) and semantic:
+        metric["semantic"] = semantic
+    if isinstance(priority, int):
+        metric["priority"] = priority
+    return metric

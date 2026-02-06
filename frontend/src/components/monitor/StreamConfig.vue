@@ -31,6 +31,7 @@ const connectionStore = useConnectionStore()
 const STORAGE_KEY = 'pm_nba_agent_sources'
 const SELECTED_KEY = 'pm_nba_agent_selected_source'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
+const POLYMARKET_PROXY_ADDRESS = 'POLYMARKET_PROXY_ADDRESS'
 
 const sources = ref<MonitorSource[]>([])
 const selectedSourceId = ref<string | null>(null)
@@ -43,6 +44,13 @@ const pollInterval = ref(10)
 const includeScoreboard = ref(true)
 const includeBoxscore = ref(true)
 const analysisInterval = ref(60)
+
+// 策略多选
+const availableStrategies = [
+  { id: 'merge_long', label: 'Merge Long' },
+  { id: 'locked_profit', label: 'Locked Profit' },
+]
+const selectedStrategyIds = ref<string[]>(['merge_long'])
 
 // 是否显示高级选项
 const showAdvanced = ref(false)
@@ -194,12 +202,16 @@ async function handleAddSource() {
 function handleConnect() {
   if (!canConnect.value || !currentSource.value) return
 
+  const proxyAddress = localStorage.getItem(POLYMARKET_PROXY_ADDRESS)?.trim() || undefined
+
   emit('connect', {
     url: currentSource.value.url,
     poll_interval: pollInterval.value,
     include_scoreboard: includeScoreboard.value,
     include_boxscore: includeBoxscore.value,
     analysis_interval: analysisInterval.value,
+    strategy_ids: selectedStrategyIds.value.length > 0 ? selectedStrategyIds.value : undefined,
+    proxy_address: proxyAddress,
   })
 }
 
@@ -349,6 +361,29 @@ onMounted(() => {
           <div class="flex justify-between text-xs px-2 mt-1">
             <span>10s</span>
             <span>120s</span>
+          </div>
+        </div>
+
+        <!-- 策略多选 -->
+        <div class="form-control">
+          <label class="label">
+            <span class="label-text">策略选择</span>
+          </label>
+          <div class="flex flex-wrap gap-3">
+            <label
+              v-for="strat in availableStrategies"
+              :key="strat.id"
+              class="flex items-center gap-2 cursor-pointer"
+            >
+              <input
+                v-model="selectedStrategyIds"
+                type="checkbox"
+                class="checkbox checkbox-sm"
+                :value="strat.id"
+                :disabled="connectionStore.isConnected"
+              />
+              <span class="label-text">{{ strat.label }}</span>
+            </label>
           </div>
         </div>
 
