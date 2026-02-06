@@ -1,7 +1,15 @@
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import type { LiveStreamRequest, SSEEventHandlers, SSEEventType, StrategySignalEventData } from '@/types/sse'
+import type { TaskEndEventData, SubscribedEventData, TaskStatusEventData } from '@/types/task'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
+
+// 任务订阅事件处理器
+export interface TaskSSEEventHandlers extends SSEEventHandlers {
+  onTaskEnd?: (data: TaskEndEventData) => void
+  onTaskStatus?: (data: TaskStatusEventData) => void
+  onSubscribed?: (data: SubscribedEventData) => void
+}
 
 // 重连配置
 const RECONNECT_CONFIG = {
@@ -20,7 +28,7 @@ export interface SSEConnectionState {
 
 export class SSEService {
   private abortController: AbortController | null = null
-  private handlers: SSEEventHandlers = {}
+  private handlers: TaskSSEEventHandlers = {}
 
   // 策略信号订阅者
   private strategySignalListeners = new Set<(data: StrategySignalEventData) => void>()
@@ -34,10 +42,14 @@ export class SSEService {
   private lastHeartbeatTime: number | null = null
   private isManualDisconnect = false // 标记是否为手动断开
 
+  // 任务模式相关状态
+  private currentTaskId: string | null = null
+  private isTaskMode = false
+
   // 状态变更回调
   private onStateChange: ((state: SSEConnectionState) => void) | null = null
 
-  setHandlers(handlers: SSEEventHandlers) {
+  setHandlers(handlers: TaskSSEEventHandlers) {
     this.handlers = handlers
   }
 
@@ -45,6 +57,14 @@ export class SSEService {
   subscribeStrategySignal(listener: (data: StrategySignalEventData) => void): () => void {
     this.strategySignalListeners.add(listener)
     return () => this.strategySignalListeners.delete(listener)
+  }
+
+  getCurrentTaskId(): string | null {
+    return this.currentTaskId
+  }
+
+  isInTaskMode(): boolean {
+    return this.isTaskMode
   }
 
   setStateChangeCallback(callback: (state: SSEConnectionState) => void) {
@@ -273,6 +293,15 @@ export class SSEService {
         case 'game_end':
           this.handlers.onGameEnd?.(parsed)
           break
+        case 'task_end':
+          this.handlers.onTaskEnd?.(parsed)
+          break
+        case 'task_status':
+          this.handlers.onTaskStatus?.(parsed)
+          break
+        case 'subscribed':
+          this.handlers.onSubscribed?.(parsed)
+          break
         default:
           console.warn('Unknown event type:', eventType)
       }
@@ -288,6 +317,131 @@ export class SSEService {
     this.lastToken = undefined
     this.retryCount = 0
     this.lastHeartbeatTime = null
+    this.currentTaskId = null
+    this.isTaskMode = false
+    this.notifyStateChange()
+  }
+
+  /**
+   * 订阅后台任务事件流
+   */
+  async subscribeTask(taskId: string, token?: string): Promise<void> {
+    this.currentTaskId = taskId
+    this.lastToken = token
+    this.isManualDisconnect = false
+    this.isTaskMode = true
+    this.retryCount = 0
+
+    await this.doSubscribeTask()
+  }
+
+  private async doSubscribeTask(): Promise<void> {
+    if (!this.currentTaskId) return
+
+    // 先断开已有连接
+    this.cleanupConnection()
+
+    this.abortController = new AbortController()
+    this.notifyStateChange()
+
+    const url = `${API_BASE_URL}/api/v1/live/subscribe/${this.currentTaskId}`
+
+    const headers: Record<string, string> = {
+      Accept: 'text/event-stream',
+    }
+
+    if (this.lastToken) {
+      headers.Authorization = `Bearer ${this.lastToken}`
+    }
+
+    try {
+      await fetchEventSource(url, {
+        method: 'GET',
+        headers,
+        signal: this.abortController.signal,
+        openWhenHidden: true,
+        onopen: async (response) => {
+          if (response.ok) {
+            this.retryCount = 0
+            this.startHeartbeatMonitor()
+            this.handlers.onOpen?.()
+            this.notifyStateChange()
+          } else {
+            const errorText = await response.text()
+            throw new Error(`Failed to subscribe: ${response.status} ${errorText}`)
+          }
+        },
+        onmessage: (event) => {
+          this.updateHeartbeat()
+          this.handleEvent(event.event as SSEEventType, event.data)
+
+          // 任务结束时自动断开
+          if (event.event === 'task_end' || event.event === 'game_end') {
+            this.isManualDisconnect = true
+          }
+        },
+        onclose: () => {
+          this.stopHeartbeatMonitor()
+          this.handlers.onClose?.()
+          this.notifyStateChange()
+
+          // 如果不是手动断开且是任务模式，尝试重连
+          if (!this.isManualDisconnect && this.isTaskMode) {
+            this.scheduleTaskReconnect()
+          }
+        },
+        onerror: (err) => {
+          console.error('Task SSE Error:', err)
+          this.stopHeartbeatMonitor()
+
+          const willRetry =
+            !this.isManualDisconnect && this.retryCount < RECONNECT_CONFIG.maxRetries
+          this.handlers.onError?.({
+            code: 'CONNECTION_ERROR',
+            message: err instanceof Error ? err.message : 'Unknown error',
+            recoverable: willRetry,
+            timestamp: new Date().toISOString(),
+          })
+
+          this.notifyStateChange()
+          throw err
+        },
+      })
+    } catch {
+      if (!this.isManualDisconnect && this.isTaskMode) {
+        this.scheduleTaskReconnect()
+      }
+    }
+  }
+
+  private scheduleTaskReconnect() {
+    if (this.isManualDisconnect) return
+    if (this.retryCount >= RECONNECT_CONFIG.maxRetries) {
+      console.warn(`Task SSE: 已达到最大重试次数 (${RECONNECT_CONFIG.maxRetries})`)
+      this.handlers.onError?.({
+        code: 'MAX_RETRIES_EXCEEDED',
+        message: `订阅任务失败，已重试 ${RECONNECT_CONFIG.maxRetries} 次`,
+        recoverable: false,
+        timestamp: new Date().toISOString(),
+      })
+      return
+    }
+
+    const delay = Math.min(
+      RECONNECT_CONFIG.baseDelay * Math.pow(2, this.retryCount),
+      RECONNECT_CONFIG.maxDelay
+    )
+
+    this.retryCount++
+    console.log(`Task SSE: 将在 ${delay}ms 后进行第 ${this.retryCount} 次重连...`)
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      if (!this.isManualDisconnect && this.isTaskMode) {
+        this.doSubscribeTask()
+      }
+    }, delay)
+
     this.notifyStateChange()
   }
 

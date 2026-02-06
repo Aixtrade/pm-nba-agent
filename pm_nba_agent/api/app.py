@@ -1,5 +1,6 @@
 """FastAPI 应用入口"""
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -13,9 +14,11 @@ from .routes.parse import router as parse_router
 from .routes.auth import router as auth_router
 from .routes.orders import router as orders_router
 from .routes.positions import router as positions_router
+from .routes.tasks import router as tasks_router
 from .services.data_fetcher import DataFetcher
 from ..agent import GameAnalyzer, AnalysisConfig
 from ..logging_config import configure_logging
+from ..shared import RedisClient
 
 configure_logging()
 
@@ -38,9 +41,25 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("GameAnalyzer 未配置 API Key，AI 分析功能不可用")
 
+    # 初始化 Redis（可选，仅在配置了 REDIS_URL 时启用）
+    redis_url = os.getenv("REDIS_URL")
+    if redis_url:
+        try:
+            app.state.redis = RedisClient(redis_url)
+            await app.state.redis.connect()
+            logger.info("Redis 已连接")
+        except Exception as e:
+            logger.warning("Redis 连接失败，任务模式不可用: {}", e)
+            app.state.redis = None
+    else:
+        app.state.redis = None
+        logger.info("未配置 REDIS_URL，任务模式不可用")
+
     yield
 
     # 关闭时清理资源
+    if app.state.redis:
+        await app.state.redis.close()
     await app.state.analyzer.close()
     app.state.fetcher.shutdown()
     logger.info("资源已关闭")
@@ -68,6 +87,7 @@ app.include_router(parse_router)
 app.include_router(auth_router)
 app.include_router(orders_router)
 app.include_router(positions_router)
+app.include_router(tasks_router)
 
 
 @app.get("/health")

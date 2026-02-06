@@ -1,5 +1,8 @@
 """SSE 实时流路由"""
 
+import asyncio
+from typing import AsyncGenerator
+
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
@@ -9,6 +12,7 @@ from ..services.data_fetcher import DataFetcher
 from ..services.game_stream import GameStreamService
 from ..services.auth import get_auth_config, is_token_valid
 from ...agent import GameAnalyzer
+from ...shared import Channels, RedisClient, TaskState, TaskStatus
 
 
 router = APIRouter(prefix="/api/v1/live", tags=["live"])
@@ -90,5 +94,123 @@ async def stream_game_data(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",  # 禁用 nginx 缓冲
+        }
+    )
+
+
+def require_redis(request: Request) -> RedisClient:
+    """获取 Redis 客户端"""
+    redis: RedisClient | None = getattr(request.app.state, "redis", None)
+    if redis is None:
+        raise HTTPException(
+            status_code=503,
+            detail="任务模式不可用，请配置 REDIS_URL",
+        )
+    return redis
+
+
+@router.get("/subscribe/{task_id}")
+async def subscribe_task(
+    request: Request,
+    task_id: str,
+) -> StreamingResponse:
+    """
+    订阅任务事件流
+
+    订阅后台任务的 SSE 事件流。客户端可以随时订阅/取消订阅，
+    不影响后台任务的运行。
+
+    **路径参数**:
+    - `task_id`: 任务 ID（通过 `/api/v1/tasks/create` 获取）
+
+    **事件类型**:
+    与 `/api/v1/live/stream` 相同，额外包含：
+    - `task_status`: 任务状态更新事件
+    - `task_end`: 任务结束事件
+
+    **示例请求**:
+    ```bash
+    curl -N http://localhost:8000/api/v1/live/subscribe/abc12345 \\
+      -H "Authorization: Bearer <token>" \\
+      -H "Accept: text/event-stream"
+    ```
+    """
+    require_auth(request)
+    redis = require_redis(request)
+
+    # 检查任务是否存在
+    status_key = Channels.task_status(task_id)
+    data = await redis.get(status_key)
+    if not data:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    status = TaskStatus.from_json(data)
+
+    # 如果任务已结束，返回最终状态
+    if status.state in (TaskState.COMPLETED, TaskState.CANCELLED, TaskState.FAILED):
+        async def final_event() -> AsyncGenerator[str, None]:
+            yield f'event: task_end\ndata: {{"task_id": "{task_id}", "state": "{status.state.value}"}}\n\n'
+
+        return StreamingResponse(
+            final_event(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            }
+        )
+
+    # 订阅任务事件 Channel
+    channel = Channels.task_events(task_id)
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        """事件生成器"""
+        # 使用新的 pubsub 连接
+        pubsub = redis.client.pubsub()
+        await pubsub.subscribe(channel)
+
+        try:
+            # 发送连接成功事件
+            yield f'event: subscribed\ndata: {{"task_id": "{task_id}"}}\n\n'
+            yield f"event: task_status\ndata: {status.to_json()}\n\n"
+
+            snapshot_events = [
+                "polymarket_info",
+                "scoreboard",
+                "polymarket_book",
+            ]
+            for event_name in snapshot_events:
+                snapshot_key = Channels.task_snapshot(task_id, event_name)
+                snapshot_event = await redis.get(snapshot_key)
+                if snapshot_event:
+                    yield snapshot_event
+
+            async for message in pubsub.listen():
+                # 检查客户端是否断开
+                if await request.is_disconnected():
+                    break
+
+                if message["type"] != "message":
+                    continue
+
+                event_data = message["data"]
+                yield event_data
+
+                # 如果是任务结束事件，退出循环
+                if "event: task_end" in event_data or "event: game_end" in event_data:
+                    break
+
+        finally:
+            await pubsub.unsubscribe(channel)
+            await pubsub.aclose()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
         }
     )

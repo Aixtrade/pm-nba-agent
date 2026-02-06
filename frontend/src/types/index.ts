@@ -68,3 +68,6 @@ export interface GameData {
   }
   players: PlayerData[]
 }
+
+// 导出任务相关类型
+export * from './task'

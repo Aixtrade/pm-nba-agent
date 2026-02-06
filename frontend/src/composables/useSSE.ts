@@ -1,12 +1,15 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { sseService } from '@/services/sseService'
-import { useAuthStore, useConnectionStore, useGameStore, useToastStore } from '@/stores'
+import { taskService } from '@/services/taskService'
+import { useAuthStore, useConnectionStore, useGameStore, useTaskStore, useToastStore } from '@/stores'
 import type { LiveStreamRequest } from '@/types/sse'
+import type { CreateTaskRequest } from '@/types/task'
 
 export function useSSE() {
   const connectionStore = useConnectionStore()
   const gameStore = useGameStore()
   const authStore = useAuthStore()
+  const taskStore = useTaskStore()
   const toastStore = useToastStore()
 
   // 网络状态
@@ -73,6 +76,20 @@ export function useSSE() {
     onGameEnd: (data) => {
       gameStore.setGameEnd(data)
     },
+    onTaskEnd: (data) => {
+      taskStore.updateTaskState(data.task_id, data.state)
+      if (data.task_id === taskStore.currentTaskId) {
+        toastStore.showInfo(`任务已结束: ${data.state}`)
+      }
+    },
+    onTaskStatus: (data) => {
+      taskStore.addTask(data)
+    },
+    onSubscribed: (data) => {
+      taskStore.setCurrentTask(data.task_id)
+      toastStore.showSuccess(`已订阅任务: ${data.task_id}`)
+      void refreshTaskStatus(data.task_id)
+    },
   })
 
   // 网络状态监听
@@ -81,10 +98,9 @@ export function useSSE() {
     console.log('SSE: 网络已恢复')
     toastStore.showInfo('网络已恢复')
 
-    // 如果之前有连接，尝试重连
-    if (sseService.canReconnect()) {
-      console.log('SSE: 网络恢复后自动重连')
-      sseService.reconnect()
+    if (!sseService.isConnected() && taskStore.currentTaskId) {
+      console.log('SSE: 网络恢复后重新订阅任务')
+      void subscribeTask(taskStore.currentTaskId)
     }
   }
 
@@ -100,10 +116,9 @@ export function useSSE() {
     if (document.visibilityState === 'visible') {
       console.log('SSE: 页面可见')
 
-      // 检查连接状态，如果断开且有待恢复的连接，尝试重连
-      if (!sseService.isConnected() && sseService.canReconnect() && isOnline.value) {
-        console.log('SSE: 页面可见后检测到连接断开，尝试重连')
-        sseService.reconnect()
+      if (!sseService.isConnected() && isOnline.value && taskStore.currentTaskId) {
+        console.log('SSE: 页面可见后检测到连接断开，重新订阅任务')
+        void subscribeTask(taskStore.currentTaskId)
       }
     }
   }
@@ -135,6 +150,90 @@ export function useSSE() {
   function disconnect() {
     sseService.disconnect()
     connectionStore.setStatus('disconnected')
+    taskStore.setCurrentTask(null)
+  }
+
+  /**
+   * 订阅后台任务
+   */
+  async function subscribeTask(taskId: string) {
+    if (!authStore.isAuthenticated) {
+      connectionStore.setStatus('disconnected')
+      toastStore.showError('请先登录')
+      return
+    }
+
+    if (!isOnline.value) {
+      connectionStore.setStatus('disconnected')
+      toastStore.showError('网络不可用')
+      return
+    }
+
+    connectionStore.setStatus('connecting')
+    gameStore.reset()
+    taskStore.setCurrentTask(taskId)
+
+    try {
+      await sseService.subscribeTask(taskId, authStore.token)
+    } catch (error) {
+      console.warn('Task subscribe failed:', error)
+    }
+  }
+
+  async function refreshTaskStatus(taskId: string, maxRetries = 3): Promise<void> {
+    if (!authStore.isAuthenticated) return
+
+    for (let attempt = 0; attempt < maxRetries; attempt += 1) {
+      try {
+        const status = await taskService.getTask(taskId, authStore.token)
+        taskStore.addTask(status)
+
+        if (status.state !== 'pending') {
+          return
+        }
+      } catch (error) {
+        console.warn('Task status refresh failed:', error)
+        return
+      }
+
+      if (attempt < maxRetries - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 800))
+      }
+    }
+  }
+
+  /**
+   * 创建任务并订阅
+   */
+  async function createAndSubscribe(request: CreateTaskRequest): Promise<string> {
+    if (!authStore.isAuthenticated) {
+      const error = new Error('请先登录')
+      toastStore.showError(error.message)
+      throw error
+    }
+
+    try {
+      const response = await taskService.createTask(request, authStore.token)
+      toastStore.showSuccess(`任务已创建: ${response.task_id}`)
+
+      // 添加到任务列表
+      taskStore.addTask({
+        task_id: response.task_id,
+        state: response.status,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+
+      // 订阅新任务
+      void subscribeTask(response.task_id)
+      void refreshTaskStatus(response.task_id)
+
+      return response.task_id
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '创建任务失败'
+      toastStore.showError(message)
+      throw error instanceof Error ? error : new Error(message)
+    }
   }
 
   // 手动重连
@@ -149,8 +248,12 @@ export function useSSE() {
       return
     }
 
-    connectionStore.setStatus('connecting')
-    await sseService.reconnect()
+    if (taskStore.currentTaskId) {
+      await subscribeTask(taskStore.currentTaskId)
+      return
+    }
+
+    toastStore.showWarning('暂无可重连的任务')
   }
 
   // 注册事件监听
@@ -172,6 +275,8 @@ export function useSSE() {
     connect,
     disconnect,
     reconnect,
+    subscribeTask,
+    createAndSubscribe,
     isConnected: () => sseService.isConnected(),
     isOnline,
   }

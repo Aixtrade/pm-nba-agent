@@ -1,4 +1,19 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: pm-nba-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - nba-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   backend:
     build:
       context: .
@@ -6,6 +21,11 @@ services:
     container_name: pm-nba-backend
     env_file:
       - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
     networks:
       - nba-network
     restart: unless-stopped
@@ -15,6 +35,23 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: pm-nba-worker
+    command: [".venv/bin/python", "-m", "pm_nba_agent.worker.main"]
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - nba-network
+    restart: unless-stopped
 
   frontend:
     build:
@@ -29,6 +66,9 @@ services:
     networks:
       - nba-network
     restart: unless-stopped
+
+volumes:
+  redis-data:
 
 networks:
   nba-network:

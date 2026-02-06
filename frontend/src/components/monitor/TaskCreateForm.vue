@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useConnectionStore } from '@/stores'
-import type { LiveStreamRequest } from '@/types/sse'
+import type { CreateTaskRequest } from '@/types/task'
+
+type CreateTaskCallbacks = {
+  onSuccess?: () => void
+  onError?: (message: string) => void
+  onFinally?: () => void
+}
 
 type MonitorSource = {
   id: string
@@ -22,11 +27,8 @@ type ParseResponse = {
 }
 
 const emit = defineEmits<{
-  connect: [request: LiveStreamRequest]
-  disconnect: []
+  createAndSubscribe: [request: CreateTaskRequest, callbacks?: CreateTaskCallbacks]
 }>()
-
-const connectionStore = useConnectionStore()
 
 const STORAGE_KEY = 'pm_nba_agent_sources'
 const SELECTED_KEY = 'pm_nba_agent_selected_source'
@@ -39,21 +41,20 @@ const newUrl = ref('')
 const addError = ref<string | null>(null)
 const isAdding = ref(false)
 
-// 表单数据
+const isCreating = ref(false)
+const createError = ref<string | null>(null)
+
 const pollInterval = ref(10)
 const includeScoreboard = ref(true)
 const includeBoxscore = ref(true)
 const analysisInterval = ref(60)
+const showAdvanced = ref(false)
 
-// 策略多选
 const availableStrategies = [
   { id: 'merge_long', label: 'Merge Long' },
   { id: 'locked_profit', label: 'Locked Profit' },
 ]
 const selectedStrategyIds = ref<string[]>(['merge_long'])
-
-// 是否显示高级选项
-const showAdvanced = ref(false)
 
 const currentSource = computed(() => {
   return sources.value.find((item) => item.id === selectedSourceId.value) || null
@@ -64,11 +65,11 @@ const isValidUrl = computed(() => {
 })
 
 const canAdd = computed(() => {
-  return isValidUrl.value && !isAdding.value && !connectionStore.isConnected
+  return isValidUrl.value && !isAdding.value
 })
 
-const canConnect = computed(() => {
-  return currentSource.value !== null && !connectionStore.isConnecting
+const canCreate = computed(() => {
+  return currentSource.value !== null && !isCreating.value
 })
 
 function generateId(): string {
@@ -199,24 +200,36 @@ async function handleAddSource() {
   }
 }
 
-function handleConnect() {
-  if (!canConnect.value || !currentSource.value) return
+function handleCreateTask() {
+  if (!canCreate.value || !currentSource.value) return
 
-  const proxyAddress = localStorage.getItem(POLYMARKET_PROXY_ADDRESS)?.trim() || undefined
+  const proxyAddress = localStorage.getItem(POLYMARKET_PROXY_ADDRESS)?.trim() || null
 
-  emit('connect', {
+  createError.value = null
+  isCreating.value = true
+
+  const request: CreateTaskRequest = {
     url: currentSource.value.url,
     poll_interval: pollInterval.value,
     include_scoreboard: includeScoreboard.value,
     include_boxscore: includeBoxscore.value,
     analysis_interval: analysisInterval.value,
     strategy_ids: selectedStrategyIds.value.length > 0 ? selectedStrategyIds.value : undefined,
+    strategy_params_map: {},
     proxy_address: proxyAddress,
-  })
-}
+  }
 
-function handleDisconnect() {
-  emit('disconnect')
+  emit('createAndSubscribe', request, {
+    onSuccess: () => {
+      createError.value = null
+    },
+    onError: (message) => {
+      createError.value = message
+    },
+    onFinally: () => {
+      isCreating.value = false
+    },
+  })
 }
 
 onMounted(() => {
@@ -227,7 +240,7 @@ onMounted(() => {
 <template>
   <div class="card bg-base-100 shadow-md">
     <div class="card-body">
-      <h2 class="card-title">比赛列表</h2>
+      <h2 class="card-title">创建任务</h2>
 
       <div class="space-y-4">
         <div class="grid gap-3 md:grid-cols-[1fr_auto] items-end">
@@ -241,13 +254,12 @@ onMounted(() => {
               placeholder="https://polymarket.com/event/nba-xxx-xxx-2026-01-27"
               class="input input-bordered w-full"
               :class="{ 'input-error': newUrl && !isValidUrl }"
-              :disabled="connectionStore.isConnected"
             />
           </div>
           <div class="form-control">
             <button
               class="btn btn-primary"
-              :class="{ 'loading': isAdding }"
+              :class="{ loading: isAdding }"
               :disabled="!canAdd"
               @click="handleAddSource"
             >
@@ -280,7 +292,6 @@ onMounted(() => {
               type="radio"
               class="radio radio-sm mt-2"
               :value="source.id"
-              :disabled="connectionStore.isConnected"
               @change="selectSource(source.id)"
             />
             <div class="flex-1 space-y-2">
@@ -288,7 +299,6 @@ onMounted(() => {
                 v-model="source.name"
                 type="text"
                 class="input input-ghost input-sm w-full"
-                :disabled="connectionStore.isConnected"
                 @blur="updateSourceName(source)"
               />
               <div class="text-xs text-base-content/60 break-all">
@@ -297,7 +307,6 @@ onMounted(() => {
             </div>
             <button
               class="btn btn-ghost btn-sm"
-              :disabled="connectionStore.isConnected"
               @click="removeSource(source.id)"
             >
               删除
@@ -309,21 +318,40 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- 高级选项切换 -->
       <div class="form-control mt-2">
         <label class="label cursor-pointer justify-start gap-2">
           <input
             v-model="showAdvanced"
             type="checkbox"
             class="checkbox checkbox-sm"
-            :disabled="connectionStore.isConnected"
           />
           <span class="label-text">显示高级选项</span>
         </label>
       </div>
 
-      <!-- 高级选项 -->
-      <div v-if="showAdvanced" class="space-y-4 mt-2 p-4 bg-base-100/80 border border-base-200 rounded-lg">
+      <div
+        v-if="showAdvanced"
+        class="space-y-4 mt-2 p-4 bg-base-100/80 border border-base-200 rounded-lg"
+      >
+        <div class="flex flex-wrap gap-4">
+          <label class="label cursor-pointer gap-2">
+            <input
+              v-model="includeScoreboard"
+              type="checkbox"
+              class="checkbox checkbox-sm"
+            />
+            <span class="label-text">包含比分板</span>
+          </label>
+          <label class="label cursor-pointer gap-2">
+            <input
+              v-model="includeBoxscore"
+              type="checkbox"
+              class="checkbox checkbox-sm"
+            />
+            <span class="label-text">包含技术统计</span>
+          </label>
+        </div>
+
         <div class="form-control">
           <label class="label">
             <span class="label-text">轮询间隔 (秒)</span>
@@ -336,7 +364,6 @@ onMounted(() => {
             max="60"
             step="5"
             class="range range-sm w-full"
-            :disabled="connectionStore.isConnected"
           />
           <div class="flex justify-between text-xs px-2 mt-1">
             <span>5s</span>
@@ -356,7 +383,6 @@ onMounted(() => {
             max="120"
             step="5"
             class="range range-sm w-full"
-            :disabled="connectionStore.isConnected"
           />
           <div class="flex justify-between text-xs px-2 mt-1">
             <span>10s</span>
@@ -364,7 +390,6 @@ onMounted(() => {
           </div>
         </div>
 
-        <!-- 策略多选 -->
         <div class="form-control">
           <label class="label">
             <span class="label-text">策略选择</span>
@@ -380,33 +405,28 @@ onMounted(() => {
                 type="checkbox"
                 class="checkbox checkbox-sm"
                 :value="strat.id"
-                :disabled="connectionStore.isConnected"
               />
               <span class="label-text">{{ strat.label }}</span>
             </label>
           </div>
         </div>
-
       </div>
 
-      <!-- 操作按钮 -->
+      <label v-if="createError" class="label pt-0">
+        <span class="label-text-alt text-error">
+          {{ createError }}
+        </span>
+      </label>
+
       <div class="card-actions justify-end mt-4">
         <button
-          v-if="!connectionStore.isConnected"
           class="btn btn-primary"
-          :class="{ 'loading': connectionStore.isConnecting }"
-          :disabled="!canConnect"
-          @click="handleConnect"
+          :class="{ loading: isCreating }"
+          :disabled="!canCreate"
+          @click="handleCreateTask"
         >
-          <span v-if="connectionStore.isConnecting">连接中...</span>
-          <span v-else>开始监控</span>
-        </button>
-        <button
-          v-else
-          class="btn btn-error"
-          @click="handleDisconnect"
-        >
-          停止监控
+          <span v-if="isCreating">创建中...</span>
+          <span v-else>创建并订阅</span>
         </button>
       </div>
     </div>
