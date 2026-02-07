@@ -180,14 +180,14 @@ watch(
       {{ periodDisplay }} {{ gameStore.scoreboard.game_clock }}
     </span>
     <button
-      class="btn btn-ghost btn-xs text-error ml-2"
-      title="停止监控"
+      class="btn btn-ghost btn-xs ml-2"
+      title="添加比赛"
       @click="handleStop"
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
       </svg>
+      添加
     </button>
   </div>
 
@@ -195,14 +195,14 @@ watch(
   <div v-else-if="isConnected" class="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-base-200/50">
     <span class="text-sm text-base-content/60">已连接，等待数据...</span>
     <button
-      class="btn btn-ghost btn-xs text-error ml-2"
-      title="停止监控"
+      class="btn btn-ghost btn-xs ml-2"
+      title="添加比赛"
       @click="handleStop"
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
       </svg>
+      添加
     </button>
   </div>
 
@@ -256,7 +256,7 @@ watch(
       :disabled="!canSubmit"
       @click="handleSubmit"
     >
-      开始
+      添加
     </button>
   </div>
 </template>
