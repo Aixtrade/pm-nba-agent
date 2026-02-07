@@ -114,10 +114,15 @@ class ParsePolymarketRequest(BaseModel):
 class LoginRequest(BaseModel):
     """登录请求"""
 
-    passphrase: str = Field(
+    username: str = Field(
         ...,
-        description="登录口令",
-        examples=["your-passphrase"]
+        description="用户名",
+        examples=["admin"]
+    )
+    password: str = Field(
+        ...,
+        description="密码",
+        examples=["your-password"]
     )
 
 
@@ -126,11 +131,15 @@ class LoginResponse(BaseModel):
 
     token: str = Field(
         ...,
-        description="访问令牌"
+        description="访问令牌 (JWT)"
     )
     token_type: str = Field(
         default="Bearer",
         description="令牌类型"
+    )
+    username: str = Field(
+        ...,
+        description="已登录的用户名"
     )
 
 

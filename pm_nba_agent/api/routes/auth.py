@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException
 
 from ..models.requests import LoginRequest, LoginResponse
-from ..services.auth import derive_token, get_auth_config
+from ..services.auth import verify_user, create_jwt
 
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -11,14 +11,9 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 @router.post("/login", response_model=LoginResponse)
 async def login(body: LoginRequest) -> LoginResponse:
-    """口令登录，返回长期 Token"""
-    passphrase, salt = get_auth_config()
+    """用户名 + 密码登录，返回 JWT"""
+    if not verify_user(body.username, body.password):
+        raise HTTPException(status_code=401, detail="用户名或密码不正确")
 
-    if not passphrase:
-        raise HTTPException(status_code=500, detail="Auth 配置缺失")
-
-    if body.passphrase != passphrase:
-        raise HTTPException(status_code=401, detail="口令不正确")
-
-    token = derive_token(passphrase, salt)
-    return LoginResponse(token=token)
+    token = create_jwt(body.username)
+    return LoginResponse(token=token, username=body.username)

@@ -182,6 +182,10 @@ class TaskManager:
 
             if action == "create" and task_id:
                 config_data = data.get("config", {})
+                # 从控制消息中传递 user_id 到配置
+                user_id = data.get("user_id", "")
+                if user_id and "user_id" not in config_data:
+                    config_data["user_id"] = user_id
                 config = TaskConfig.from_dict(config_data)
                 await self.create_task(task_id, config)
 

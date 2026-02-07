@@ -7,27 +7,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from ..services.auth import get_auth_config, is_token_valid
+from ..services.auth import require_auth
 from ...shared import Channels, RedisClient, TaskConfig, TaskState, TaskStatus
 
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
-
-
-def require_auth(request: Request) -> None:
-    """验证访问令牌"""
-    passphrase, salt = get_auth_config()
-
-    if not passphrase:
-        raise HTTPException(status_code=500, detail="Auth 配置缺失")
-
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="缺少访问令牌")
-
-    provided = auth_header.removeprefix("Bearer ").strip()
-    if not is_token_valid(provided, passphrase, salt):
-        raise HTTPException(status_code=401, detail="访问令牌无效")
 
 
 def require_redis(request: Request) -> RedisClient:
@@ -39,6 +23,21 @@ def require_redis(request: Request) -> RedisClient:
             detail="任务模式不可用，请配置 REDIS_URL",
         )
     return redis
+
+
+async def _require_task_owner(
+    redis: RedisClient, task_id: str, user_id: str
+) -> TaskStatus:
+    """加载 TaskStatus 并校验归属，不匹配返回 404"""
+    status_key = Channels.task_status(task_id)
+    data = await redis.get(status_key)
+    if not data:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    status = TaskStatus.from_json(data)
+    if status.user_id and status.user_id != user_id:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return status
 
 
 class CreateTaskRequest(BaseModel):
@@ -119,7 +118,7 @@ async def create_task(
     - `task_id`: 任务 ID，用于后续查询和订阅
     - `status`: 任务状态
     """
-    require_auth(request)
+    user_id = require_auth(request)
     redis = require_redis(request)
 
     # 生成任务 ID
@@ -146,6 +145,7 @@ async def create_task(
         proxy_address=body.proxy_address,
         auto_buy=body.auto_buy or {},
         auto_sell=body.auto_sell or {},
+        user_id=user_id,
     )
 
     # 保存配置到 Redis
@@ -153,11 +153,12 @@ async def create_task(
     await redis.set(config_key, config.to_json(), ex=86400)
 
     # 创建初始状态
-    status = TaskStatus.create(task_id)
+    status = TaskStatus.create(task_id, user_id=user_id)
     status_key = Channels.task_status(task_id)
     await redis.set(status_key, status.to_json(), ex=86400)
 
-    # 添加到任务集合
+    # 添加到用户任务集合 + 全局任务集合
+    await redis.sadd(Channels.user_tasks(user_id), task_id)
     await redis.sadd(Channels.all_tasks(), task_id)
 
     # 发送控制消息给 Worker
@@ -165,6 +166,7 @@ async def create_task(
         "action": "create",
         "task_id": task_id,
         "config": config.to_dict(),
+        "user_id": user_id,
     })
     await redis.publish(Channels.CONTROL, control_message)
 
@@ -177,14 +179,14 @@ async def create_task(
 @router.get("/", response_model=TaskListResponse)
 async def list_tasks(request: Request) -> TaskListResponse:
     """
-    列出所有任务
+    列出当前用户的所有任务
 
-    返回所有任务的状态列表。
+    返回当前用户所有任务的状态列表。
     """
-    require_auth(request)
+    user_id = require_auth(request)
     redis = require_redis(request)
 
-    task_ids = await redis.smembers(Channels.all_tasks())
+    task_ids = await redis.smembers(Channels.user_tasks(user_id))
     tasks: list[TaskStatusResponse] = []
 
     for task_id in task_ids:
@@ -216,15 +218,10 @@ async def get_task(request: Request, task_id: str) -> TaskStatusResponse:
 
     返回指定任务的详细状态。
     """
-    require_auth(request)
+    user_id = require_auth(request)
     redis = require_redis(request)
 
-    status_key = Channels.task_status(task_id)
-    data = await redis.get(status_key)
-    if not data:
-        raise HTTPException(status_code=404, detail="任务不存在")
-
-    status = TaskStatus.from_json(data)
+    status = await _require_task_owner(redis, task_id, user_id)
     return TaskStatusResponse(
         task_id=status.task_id,
         state=status.state.value,
@@ -240,8 +237,11 @@ async def get_task(request: Request, task_id: str) -> TaskStatusResponse:
 @router.get("/{task_id}/config", response_model=TaskConfigResponse)
 async def get_task_config(request: Request, task_id: str) -> TaskConfigResponse:
     """获取任务配置"""
-    require_auth(request)
+    user_id = require_auth(request)
     redis = require_redis(request)
+
+    # 先校验归属
+    await _require_task_owner(redis, task_id, user_id)
 
     config_key = Channels.task_config(task_id)
     config_data = await redis.get(config_key)
@@ -259,16 +259,10 @@ async def cancel_task(request: Request, task_id: str) -> dict[str, str]:
 
     取消指定的后台任务。
     """
-    require_auth(request)
+    user_id = require_auth(request)
     redis = require_redis(request)
 
-    # 检查任务是否存在
-    status_key = Channels.task_status(task_id)
-    data = await redis.get(status_key)
-    if not data:
-        raise HTTPException(status_code=404, detail="任务不存在")
-
-    status = TaskStatus.from_json(data)
+    status = await _require_task_owner(redis, task_id, user_id)
 
     # 检查任务状态
     if status.state in (TaskState.COMPLETED, TaskState.CANCELLED, TaskState.FAILED):
@@ -295,8 +289,10 @@ async def update_task_config(
 
     支持在任务运行中更新参数（例如 auto_buy 开关、选边、策略配置等）。
     """
-    require_auth(request)
+    user_id = require_auth(request)
     redis = require_redis(request)
+
+    await _require_task_owner(redis, task_id, user_id)
 
     config_key = Channels.task_config(task_id)
     config_data = await redis.get(config_key)
@@ -322,13 +318,10 @@ async def update_task_config(
 @router.post("/{task_id}/positions/refresh")
 async def refresh_task_positions(request: Request, task_id: str) -> dict[str, str]:
     """触发任务立即刷新持仓"""
-    require_auth(request)
+    user_id = require_auth(request)
     redis = require_redis(request)
 
-    status_key = Channels.task_status(task_id)
-    data = await redis.get(status_key)
-    if not data:
-        raise HTTPException(status_code=404, detail="任务不存在")
+    await _require_task_owner(redis, task_id, user_id)
 
     control_message = json.dumps({
         "action": "refresh_positions",

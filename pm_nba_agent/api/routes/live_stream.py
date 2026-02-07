@@ -10,27 +10,12 @@ from pydantic import ValidationError
 from ..models.requests import LiveStreamRequest
 from ..services.data_fetcher import DataFetcher
 from ..services.game_stream import GameStreamService
-from ..services.auth import get_auth_config, is_token_valid
+from ..services.auth import require_auth
 from ...agent import GameAnalyzer
 from ...shared import Channels, RedisClient, TaskState, TaskStatus
 
 
 router = APIRouter(prefix="/api/v1/live", tags=["live"])
-
-
-def require_auth(request: Request) -> None:
-    passphrase, salt = get_auth_config()
-
-    if not passphrase:
-        raise HTTPException(status_code=500, detail="Auth 配置缺失")
-
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="缺少访问令牌")
-
-    provided = auth_header.removeprefix("Bearer ").strip()
-    if not is_token_valid(provided, passphrase, salt):
-        raise HTTPException(status_code=401, detail="访问令牌无效")
 
 
 @router.post("/stream")
@@ -142,16 +127,20 @@ async def subscribe_task(
       -H "Accept: text/event-stream"
     ```
     """
-    require_auth(request)
+    user_id = require_auth(request)
     redis = require_redis(request)
 
-    # 检查任务是否存在
+    # 检查任务是否存在 + 归属校验
     status_key = Channels.task_status(task_id)
     data = await redis.get(status_key)
     if not data:
         raise HTTPException(status_code=404, detail="任务不存在")
 
     status = TaskStatus.from_json(data)
+
+    # 归属校验：user_id 不匹配时返回 404
+    if status.user_id and status.user_id != user_id:
+        raise HTTPException(status_code=404, detail="任务不存在")
 
     # 如果任务已结束，返回最终状态
     if status.state in (TaskState.COMPLETED, TaskState.CANCELLED, TaskState.FAILED):

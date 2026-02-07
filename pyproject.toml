@@ -12,7 +12,9 @@ dependencies = [
     "pandas>=3.0.0",
     "pocketflow>=0.0.3",
     "py-clob-client>=0.34.5",
+    "pyjwt>=2.8.0",
     "python-dotenv>=1.2.1",
+    "pyyaml>=6.0",
     "redis[hiredis]>=5.0.0",
     "websocket-client>=1.9.0",
 ]

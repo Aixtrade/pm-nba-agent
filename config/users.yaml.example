@@ -1,0 +1,7 @@
+# PM NBA Agent - User accounts
+# Copy this file to users.yaml and change the passwords.
+# Each user gets isolated task management.
+
+users:
+  - username: admin
+    password: "change_me"

@@ -15,6 +15,7 @@ from .routes.auth import router as auth_router
 from .routes.orders import router as orders_router
 from .routes.positions import router as positions_router
 from .routes.tasks import router as tasks_router
+from .services.auth import load_users
 from .services.data_fetcher import DataFetcher
 from ..agent import GameAnalyzer, AnalysisConfig
 from ..logging_config import configure_logging
@@ -28,6 +29,9 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     root_dir = Path(__file__).resolve().parents[2]
     load_dotenv(dotenv_path=root_dir / ".env", override=False)
+
+    # 加载用户配置
+    load_users()
 
     # 启动时初始化资源
     app.state.fetcher = DataFetcher(max_workers=3)

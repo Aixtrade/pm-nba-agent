@@ -7,13 +7,14 @@ const authStore = useAuthStore()
 const router = useRouter()
 const route = useRoute()
 
-const passphrase = ref('')
+const username = ref('')
+const password = ref('')
 const errorMessage = ref('')
 
 async function handleSubmit() {
   errorMessage.value = ''
 
-  const isSuccess = await authStore.login(passphrase.value)
+  const isSuccess = await authStore.login(username.value, password.value)
 
   if (!isSuccess) {
     errorMessage.value = authStore.lastError || '登录失败'
@@ -21,7 +22,8 @@ async function handleSubmit() {
   }
 
   const redirect = (route.query.redirect as string) || '/monitor'
-  passphrase.value = ''
+  username.value = ''
+  password.value = ''
   router.replace(redirect)
 }
 </script>
@@ -34,7 +36,7 @@ async function handleSubmit() {
           <div class="login-tag">Live NBA Monitor</div>
           <h1>NBA 实时监控</h1>
           <p>
-            追踪即时比分、球员表现与回合走势。安全口令登录后，直达完整比赛控制台。
+            追踪即时比分、球员表现与回合走势。登录后直达完整比赛控制台。
           </p>
           <div class="login-highlights">
             <div class="highlight-card">
@@ -55,16 +57,26 @@ async function handleSubmit() {
         <section class="login-card">
           <div class="login-card-inner">
             <div class="login-card-title">登录监控台</div>
-            <p class="login-card-subtitle">使用安全口令进入实时比赛看板</p>
+            <p class="login-card-subtitle">使用账号密码进入实时比赛看板</p>
 
             <form class="login-form" @submit.prevent="handleSubmit">
-              <label class="login-label" for="login-passphrase">口令</label>
+              <label class="login-label" for="login-username">用户名</label>
               <input
-                id="login-passphrase"
-                v-model="passphrase"
+                id="login-username"
+                v-model="username"
+                type="text"
+                class="login-input"
+                placeholder="输入用户名"
+                autocomplete="username"
+              >
+
+              <label class="login-label" for="login-password">密码</label>
+              <input
+                id="login-password"
+                v-model="password"
                 type="password"
                 class="login-input"
-                placeholder="输入口令"
+                placeholder="输入密码"
                 autocomplete="current-password"
                 :aria-invalid="Boolean(errorMessage)"
               >
@@ -76,7 +88,7 @@ async function handleSubmit() {
               <button class="login-button" type="submit">进入控制台</button>
             </form>
 
-            <div class="login-hint">口令由后端环境变量配置</div>
+            <div class="login-hint">账号由服务器端配置管理</div>
           </div>
         </section>
       </div>

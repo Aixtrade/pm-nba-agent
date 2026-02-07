@@ -23,6 +23,7 @@ class TaskConfig:
 
     url: str
     poll_interval: float = 10.0
+    user_id: str = ""
     include_scoreboard: bool = True
     include_boxscore: bool = True
     analysis_interval: float = 30.0
@@ -77,6 +78,7 @@ class TaskConfig:
         return cls(
             url=data.get("url", ""),
             poll_interval=float(data.get("poll_interval", 10.0)),
+            user_id=str(data.get("user_id", "")),
             include_scoreboard=bool(data.get("include_scoreboard", True)),
             include_boxscore=bool(data.get("include_boxscore", True)),
             analysis_interval=float(data.get("analysis_interval", 30.0)),
@@ -114,6 +116,7 @@ class TaskStatus:
     error: Optional[str] = None
     home_team: Optional[str] = None
     away_team: Optional[str] = None
+    user_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
@@ -126,6 +129,7 @@ class TaskStatus:
             "error": self.error,
             "home_team": self.home_team,
             "away_team": self.away_team,
+            "user_id": self.user_id,
         }
 
     def to_json(self) -> str:
@@ -144,6 +148,7 @@ class TaskStatus:
             error=data.get("error"),
             home_team=data.get("home_team"),
             away_team=data.get("away_team"),
+            user_id=str(data.get("user_id", "")),
         )
 
     @classmethod
@@ -152,7 +157,7 @@ class TaskStatus:
         return cls.from_dict(json.loads(json_str))
 
     @classmethod
-    def create(cls, task_id: str) -> "TaskStatus":
+    def create(cls, task_id: str, user_id: str = "") -> "TaskStatus":
         """创建新任务状态"""
         now = datetime.utcnow().isoformat() + "Z"
         return cls(
@@ -160,6 +165,7 @@ class TaskStatus:
             state=TaskState.PENDING,
             created_at=now,
             updated_at=now,
+            user_id=user_id,
         )
 
     def update_state(self, state: TaskState, error: Optional[str] = None) -> None:

@@ -37,6 +37,11 @@ class Channels:
         return f"{cls.PREFIX}:tasks"
 
     @classmethod
+    def user_tasks(cls, user_id: str) -> str:
+        """用户任务集合 Key"""
+        return f"{cls.PREFIX}:user:{user_id}:tasks"
+
+    @classmethod
     def parse_task_id(cls, channel: str) -> str | None:
         """从 Channel 名称解析 task_id"""
         prefix = f"{cls.PREFIX}:task:"
