@@ -23,6 +23,9 @@ services:
       - .env
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - USERS_CONFIG_PATH=/app/config/users.yaml
+    volumes:
+      - ./config:/app/config:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -46,6 +49,9 @@ services:
       - .env
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - USERS_CONFIG_PATH=/app/config/users.yaml
+    volumes:
+      - ./config:/app/config:ro
     depends_on:
       redis:
         condition: service_healthy
