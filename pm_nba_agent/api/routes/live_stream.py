@@ -1,11 +1,14 @@
 """SSE 实时流路由"""
 
 import asyncio
+import json
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
+from loguru import logger
 from pydantic import ValidationError
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from ..models.requests import LiveStreamRequest
 from ..services.data_fetcher import DataFetcher
@@ -162,11 +165,12 @@ async def subscribe_task(
 
     async def event_generator() -> AsyncGenerator[str, None]:
         """事件生成器"""
-        # 使用新的 pubsub 连接
-        pubsub = redis.client.pubsub()
-        await pubsub.subscribe(channel)
-
+        pubsub = None
         try:
+            # 使用新的 pubsub 连接
+            pubsub = redis.client.pubsub()
+            await pubsub.subscribe(channel)
+
             # 发送连接成功事件
             yield f'event: subscribed\ndata: {{"task_id": "{task_id}"}}\n\n'
             yield f"event: task_status\ndata: {status.to_json()}\n\n"
@@ -200,9 +204,23 @@ async def subscribe_task(
                 if "event: task_end" in event_data or "event: game_end" in event_data:
                     break
 
+        except RedisConnectionError as e:
+            logger.error("Redis 连接错误 (task={}): {}", task_id, e)
+            error_payload = json.dumps({
+                "code": "REDIS_CONNECTION_ERROR",
+                "message": "服务器繁忙，请稍后重试",
+                "recoverable": True,
+                "timestamp": "",
+            })
+            yield f"event: error\ndata: {error_payload}\n\n"
+
         finally:
-            await pubsub.unsubscribe(channel)
-            await pubsub.aclose()
+            if pubsub:
+                try:
+                    await pubsub.unsubscribe(channel)
+                    await pubsub.aclose()
+                except Exception:
+                    pass
 
     return StreamingResponse(
         event_generator(),

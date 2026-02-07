@@ -115,7 +115,6 @@ export function useSSE() {
     },
     onSubscribed: (data) => {
       taskStore.setCurrentTask(data.task_id)
-      toastStore.showSuccess(`已订阅任务: ${data.task_id}`)
       void refreshTaskStatus(data.task_id)
     },
   })

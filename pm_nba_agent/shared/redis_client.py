@@ -25,7 +25,7 @@ class RedisClient:
         self._pool = redis.ConnectionPool.from_url(
             self._url,
             decode_responses=True,
-            max_connections=10,
+            max_connections=50,
         )
         self._client = redis.Redis(connection_pool=self._pool)
         # 测试连接
