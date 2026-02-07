@@ -92,6 +92,15 @@ export function useSSE() {
     onAutoSellState: (data) => {
       gameStore.setAutoSellState(data)
     },
+    onAutoSellExecution: (data) => {
+      if (data?.source !== 'task_auto_sell') return
+      const orderCount = Array.isArray(data.orders) ? data.orders.length : 0
+      if (data.success) {
+        toastStore.showSuccess(`自动卖出下单成功 (${orderCount} 笔)`)
+      } else {
+        toastStore.showError(data.error || '自动卖出下单失败')
+      }
+    },
     onPositionState: (data) => {
       gameStore.setPositionState(data)
     },

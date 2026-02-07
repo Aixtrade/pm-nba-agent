@@ -537,6 +537,21 @@ class GameTask:
         }
         await self._publish_event(f"event: auto_sell_state\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n")
 
+    async def _publish_auto_sell_execution(
+        self,
+        success: bool,
+        orders: list[dict[str, Any]],
+        error: Optional[str] = None,
+    ) -> None:
+        payload = {
+            "success": success,
+            "orders": orders,
+            "error": error,
+            "source": "task_auto_sell",
+            "timestamp": self._now_iso(),
+        }
+        await self._publish_event(f"event: auto_sell_execution\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n")
+
     async def _publish_position_state(self) -> None:
         payload = {
             "sides": self._position_sides,
@@ -685,6 +700,8 @@ class GameTask:
         await self._publish_auto_sell_state()
 
         success_count = 0
+        orders: list[dict[str, Any]] = []
+        error_messages: list[str] = []
         try:
             for order in candidates:
                 outcome = order["outcome"]
@@ -702,15 +719,34 @@ class GameTask:
                         private_key=self.config.private_key,
                         proxy_address=self.config.proxy_address,
                     )
+                    orders.append({
+                        **order,
+                        "side": "SELL",
+                        "status": "SUBMITTED",
+                    })
                     self._record_auto_sell_stat(outcome, float(order["size"]) * float(order["price"]))
                     success_count += 1
                 except Exception as exc:
                     logger.error("自动卖出失败 task={} outcome={}: {}", self.task_id, outcome, exc)
+                    message = str(exc)
+                    error_messages.append(message)
+                    orders.append({
+                        **order,
+                        "side": "SELL",
+                        "status": "FAILED",
+                        "error": message,
+                    })
                     if previous:
                         self._auto_sell_last_sell_time[outcome] = previous
                     else:
                         self._auto_sell_last_sell_time.pop(outcome, None)
 
+            success = success_count > 0 and all(item.get("status") != "FAILED" for item in orders)
+            await self._publish_auto_sell_execution(
+                success=success,
+                orders=orders,
+                error="; ".join(error_messages) if error_messages else None,
+            )
             if success_count > 0:
                 self._auto_sell_last_order_time = self._now_iso()
                 await asyncio.sleep(2.0)

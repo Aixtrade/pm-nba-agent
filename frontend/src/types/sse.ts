@@ -194,6 +194,14 @@ export interface AutoSellStateEventData {
   timestamp: string
 }
 
+export interface AutoSellExecutionEventData {
+  success: boolean
+  orders?: Array<Record<string, unknown>>
+  error?: string | null
+  source?: string
+  timestamp: string
+}
+
 export interface PositionStateEventData {
   sides: Array<{
     outcome: string
@@ -225,6 +233,7 @@ export type SSEEventType =
   | 'subscribed'
   | 'auto_buy_state'
   | 'auto_sell_state'
+  | 'auto_sell_execution'
   | 'position_state'
 
 // SSE 事件处理器
@@ -240,6 +249,7 @@ export interface SSEEventHandlers {
   onGameEnd?: (data: GameEndEventData) => void
   onAutoBuyState?: (data: AutoBuyStateEventData) => void
   onAutoSellState?: (data: AutoSellStateEventData) => void
+  onAutoSellExecution?: (data: AutoSellExecutionEventData) => void
   onPositionState?: (data: PositionStateEventData) => void
   onOpen?: () => void
   onClose?: () => void
