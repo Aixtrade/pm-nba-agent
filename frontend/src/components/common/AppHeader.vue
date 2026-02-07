@@ -1,9 +1,10 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSSE } from '@/composables/useSSE'
 import { useAuthStore, useConnectionStore, useTaskStore, useToastStore } from '@/stores'
 import { taskService } from '@/services/taskService'
-import type { CreateTaskRequest } from '@/types/task'
+import type { CreateTaskRequest, TaskState } from '@/types/task'
 import ConnectionStatus from './ConnectionStatus.vue'
 import GameCommandBar from './GameCommandBar.vue'
 import ActiveGamesDropdown from './ActiveGamesDropdown.vue'
@@ -15,12 +16,15 @@ const authStore = useAuthStore()
 const connectionStore = useConnectionStore()
 const taskStore = useTaskStore()
 const toastStore = useToastStore()
+const gameCommandBarKey = ref(0)
 
 type CreateTaskCallbacks = {
   onSuccess?: () => void
   onError?: () => void
   onFinally?: () => void
 }
+
+const TERMINAL_STATES: TaskState[] = ['completed', 'cancelled', 'failed']
 
 async function handleCreateAndSubscribe(request: CreateTaskRequest, callbacks?: CreateTaskCallbacks) {
   try {
@@ -38,17 +42,49 @@ function handleSubscribeTask(taskId: string) {
 }
 
 async function handleCancelTask(taskId: string) {
-  try {
-    await taskService.cancelTask(taskId, authStore.token)
-    taskStore.updateTaskState(taskId, 'cancelled')
-    toastStore.showSuccess('任务已取消')
+  const isCurrentTask = taskStore.currentTaskId === taskId
+  const task = taskStore.tasks.find((item) => item.task_id === taskId)
+  if (!task) {
+    toastStore.showError('任务不存在')
+    return
+  }
 
-    if (taskStore.currentTaskId === taskId) {
+  try {
+    if (!TERMINAL_STATES.includes(task.state)) {
+      if (task.state !== 'cancelling') {
+        await taskService.cancelTask(taskId, authStore.token)
+        taskStore.updateTaskState(taskId, 'cancelling')
+      }
+      await waitForTaskTerminal(taskId)
+    }
+
+    await taskService.deleteTask(taskId, authStore.token)
+    taskStore.removeTask(taskId)
+    toastStore.showSuccess('任务已删除')
+
+    if (isCurrentTask) {
       disconnect()
+      gameCommandBarKey.value += 1
     }
   } catch (error) {
-    toastStore.showError(error instanceof Error ? error.message : '取消任务失败')
+    toastStore.showError(error instanceof Error ? error.message : '删除任务失败')
   }
+}
+
+async function waitForTaskTerminal(taskId: string): Promise<void> {
+  const maxAttempts = 20
+  const intervalMs = 800
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const status = await taskService.getTask(taskId, authStore.token)
+    taskStore.addTask(status)
+    if (TERMINAL_STATES.includes(status.state)) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
+
+  throw new Error('任务取消超时，请稍后重试删除')
 }
 
 function handleDisconnect() {
@@ -91,6 +127,7 @@ function handleLogout() {
       <!-- 中间：GameCommandBar -->
       <div class="flex justify-center">
         <GameCommandBar
+          :key="gameCommandBarKey"
           v-if="authStore.isAuthenticated"
           @submit="handleCreateAndSubscribe"
           @stop="handleDisconnect"

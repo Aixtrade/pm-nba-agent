@@ -132,8 +132,8 @@ class TaskManager:
             if not status:
                 continue
 
-            # 只恢复 PENDING 和 RUNNING 状态的任务
-            if status.state not in (TaskState.PENDING, TaskState.RUNNING):
+            # 恢复未完成状态（包括取消中）
+            if status.state not in (TaskState.PENDING, TaskState.RUNNING, TaskState.CANCELLING):
                 continue
 
             # 获取配置
@@ -155,6 +155,8 @@ class TaskManager:
             )
             self._tasks[task_id] = task
             task._task = asyncio.create_task(self._run_task(task_id, task))
+            if status.state == TaskState.CANCELLING:
+                task.cancel()
 
             logger.info("任务已恢复: {}", task_id)
 

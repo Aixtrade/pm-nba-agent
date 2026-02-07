@@ -102,6 +102,16 @@ class TaskConfigResponse(BaseModel):
     config: dict[str, Any]
 
 
+SNAPSHOT_EVENT_NAMES = [
+    "polymarket_info",
+    "scoreboard",
+    "polymarket_book",
+    "auto_buy_state",
+    "auto_sell_state",
+    "position_state",
+]
+
+
 @router.post("/create", response_model=CreateTaskResponse)
 async def create_task(
     request: Request,
@@ -252,7 +262,7 @@ async def get_task_config(request: Request, task_id: str) -> TaskConfigResponse:
     return TaskConfigResponse(config=config.to_dict())
 
 
-@router.delete("/{task_id}")
+@router.post("/{task_id}/cancel")
 async def cancel_task(request: Request, task_id: str) -> dict[str, str]:
     """
     取消任务
@@ -267,6 +277,12 @@ async def cancel_task(request: Request, task_id: str) -> dict[str, str]:
     # 检查任务状态
     if status.state in (TaskState.COMPLETED, TaskState.CANCELLED, TaskState.FAILED):
         return {"message": f"任务已处于终态: {status.state.value}"}
+    if status.state == TaskState.CANCELLING:
+        return {"message": "任务正在取消中"}
+
+    status.update_state(TaskState.CANCELLING)
+    status_key = Channels.task_status(task_id)
+    await redis.set(status_key, status.to_json(), ex=86400)
 
     # 发送取消消息给 Worker
     control_message = json.dumps({
@@ -276,6 +292,36 @@ async def cancel_task(request: Request, task_id: str) -> dict[str, str]:
     await redis.publish(Channels.CONTROL, control_message)
 
     return {"message": "取消请求已发送"}
+
+
+@router.delete("/{task_id}")
+async def delete_task(request: Request, task_id: str) -> dict[str, str]:
+    """
+    删除任务
+
+    仅允许删除终态任务，并清理 Redis 持久化数据。
+    """
+    user_id = require_auth(request)
+    redis = require_redis(request)
+
+    status = await _require_task_owner(redis, task_id, user_id)
+    if status.state not in (TaskState.COMPLETED, TaskState.CANCELLED, TaskState.FAILED):
+        raise HTTPException(status_code=409, detail="任务未结束，请先取消并等待终态")
+
+    keys_to_delete = [
+        Channels.task_status(task_id),
+        Channels.task_config(task_id),
+    ]
+    for event_name in SNAPSHOT_EVENT_NAMES:
+        keys_to_delete.append(Channels.task_snapshot(task_id, event_name))
+
+    await redis.delete(*keys_to_delete)
+    await redis.srem(Channels.all_tasks(), task_id)
+    await redis.srem(Channels.user_tasks(user_id), task_id)
+    if status.user_id and status.user_id != user_id:
+        await redis.srem(Channels.user_tasks(status.user_id), task_id)
+
+    return {"message": "任务已删除"}
 
 
 @router.patch("/{task_id}/config")

@@ -4,7 +4,7 @@
  */
 
 // 任务状态枚举
-export type TaskState = 'pending' | 'running' | 'completed' | 'cancelled' | 'failed'
+export type TaskState = 'pending' | 'cancelling' | 'running' | 'completed' | 'cancelled' | 'failed'
 
 // 任务状态
 export interface TaskStatus {

@@ -94,6 +94,23 @@ class TaskService {
    * 取消任务
    */
   async cancelTask(taskId: string, token?: string): Promise<{ message: string }> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/tasks/${taskId}/cancel`, {
+      method: 'POST',
+      headers: this.getHeaders(token),
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }))
+      throw new Error(error.detail || `取消任务失败: ${response.status}`)
+    }
+
+    return response.json()
+  }
+
+  /**
+   * 删除任务（仅终态）
+   */
+  async deleteTask(taskId: string, token?: string): Promise<{ message: string }> {
     const response = await fetch(`${API_BASE_URL}/api/v1/tasks/${taskId}`, {
       method: 'DELETE',
       headers: this.getHeaders(token),
@@ -101,7 +118,7 @@ class TaskService {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: response.statusText }))
-      throw new Error(error.detail || `取消任务失败: ${response.status}`)
+      throw new Error(error.detail || `删除任务失败: ${response.status}`)
     }
 
     return response.json()

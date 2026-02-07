@@ -15,7 +15,7 @@ export const useTaskStore = defineStore('task', () => {
   )
 
   const activeTasks = computed(() =>
-    tasks.value.filter((t) => t.state === 'pending' || t.state === 'running')
+    tasks.value.filter((t) => t.state === 'pending' || t.state === 'running' || t.state === 'cancelling')
   )
 
   const hasActiveTasks = computed(() => activeTasks.value.length > 0)

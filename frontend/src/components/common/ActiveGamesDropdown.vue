@@ -19,7 +19,7 @@ const isRefreshing = ref(false)
 const rootRef = ref<HTMLElement | null>(null)
 
 const activeTasks = computed(() =>
-  taskStore.tasks.filter((t) => t.state === 'running' || t.state === 'pending'),
+  taskStore.tasks.filter((t) => t.state === 'running' || t.state === 'pending' || t.state === 'cancelling'),
 )
 
 const activeCount = computed(() => activeTasks.value.length)
@@ -29,6 +29,8 @@ function getStateBadgeClass(state: TaskState): string {
     case 'running':
       return 'badge-success'
     case 'pending':
+      return 'badge-warning'
+    case 'cancelling':
       return 'badge-warning'
     case 'completed':
       return 'badge-info'
@@ -45,6 +47,8 @@ function getStateLabel(state: TaskState): string {
   switch (state) {
     case 'pending':
       return '等待中'
+    case 'cancelling':
+      return '取消中'
     case 'completed':
       return '已完成'
     case 'cancelled':
@@ -215,6 +219,7 @@ onUnmounted(() => {
             <button
               class="btn btn-ghost btn-xs text-error"
               title="停止"
+              :disabled="task.state === 'cancelling'"
               @click="handleCancel(task.task_id)"
             >
               <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

@@ -11,6 +11,7 @@ class TaskState(str, Enum):
     """任务状态枚举"""
 
     PENDING = "pending"  # 等待启动
+    CANCELLING = "cancelling"  # 取消中
     RUNNING = "running"  # 运行中
     COMPLETED = "completed"  # 正常完成
     CANCELLED = "cancelled"  # 用户取消

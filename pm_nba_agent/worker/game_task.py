@@ -109,7 +109,7 @@ class GameTask:
 
     async def run(self) -> None:
         """运行任务"""
-        status = TaskStatus.create(self.task_id)
+        status = await self._load_or_create_status()
         status.update_state(TaskState.RUNNING)
         await self._save_status(status)
         await self._publish_status(status)
@@ -936,6 +936,17 @@ class GameTask:
         key = Channels.task_status(self.task_id)
         # 状态保留 24 小时
         await self.redis.set(key, status.to_json(), ex=86400)
+
+    async def _load_or_create_status(self) -> TaskStatus:
+        """加载已有状态，避免覆盖 created_at/user_id 等字段"""
+        key = Channels.task_status(self.task_id)
+        data = await self.redis.get(key)
+        if not data:
+            return TaskStatus.create(self.task_id)
+        try:
+            return TaskStatus.from_json(data)
+        except Exception:
+            return TaskStatus.create(self.task_id)
 
     async def _publish_status(self, status: TaskStatus) -> None:
         """发布任务状态事件"""
