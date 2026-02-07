@@ -156,6 +156,8 @@ export interface StrategySignalEventData {
     success: boolean
     orders?: Array<Record<string, unknown>>
     error?: string | null
+    source?: string
+    strategy_id?: string
   }
   strategy?: {
     id: string

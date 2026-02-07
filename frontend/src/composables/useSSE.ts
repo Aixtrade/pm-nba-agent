@@ -57,6 +57,16 @@ export function useSSE() {
     },
     onStrategySignal: (data) => {
       gameStore.addStrategySignal(data)
+
+      const execution = data.execution
+      if (execution?.source === 'task_auto_buy') {
+        const orderCount = Array.isArray(execution.orders) ? execution.orders.length : 0
+        if (execution.success) {
+          toastStore.showSuccess(`自动买入下单成功 (${orderCount} 笔)`)
+        } else {
+          toastStore.showError(execution.error || '自动买入下单失败')
+        }
+      }
     },
     onError: (data) => {
       console.warn('SSE Error:', data)

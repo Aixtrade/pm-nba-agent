@@ -22,6 +22,8 @@ const formEnabled = ref(false)
 const polymarketInfo = computed(() => gameStore.polymarketInfo)
 const autoBuyState = computed(() => gameStore.autoBuyState)
 const currentTaskId = computed(() => taskStore.currentTaskId)
+const effectiveEnabled = computed(() => autoBuyState.value?.enabled ?? formEnabled.value)
+const effectiveIsOrdering = computed(() => autoBuyState.value?.is_ordering ?? false)
 
 const availableOutcomes = computed(() => {
   const info = polymarketInfo.value
@@ -30,14 +32,14 @@ const availableOutcomes = computed(() => {
 })
 
 const statusText = computed(() => {
-  if (!autoBuyState.value?.enabled) return '已关闭'
-  if (autoBuyState.value.is_ordering) return '下单中...'
+  if (!effectiveEnabled.value) return '已关闭'
+  if (effectiveIsOrdering.value) return '下单中...'
   return '等待信号'
 })
 
 const statusClass = computed(() => {
-  if (!autoBuyState.value?.enabled) return 'text-base-content/50'
-  if (autoBuyState.value.is_ordering) return 'text-warning'
+  if (!effectiveEnabled.value) return 'text-base-content/50'
+  if (effectiveIsOrdering.value) return 'text-warning'
   return 'text-success'
 })
 
@@ -54,6 +56,28 @@ const latestSignalClass = computed(() => {
   if (type === 'BUY') return 'text-success'
   if (type === 'SELL') return 'text-error'
   return 'text-base-content/50'
+})
+
+const latestOrderExecution = computed(() => {
+  const execution = gameStore.getLatestSignalForStrategy(STRATEGY_ID)?.execution
+  if (!execution || execution.source !== 'task_auto_buy') return null
+  return execution
+})
+
+const latestOrderExecutionText = computed(() => {
+  const execution = latestOrderExecution.value
+  if (!execution) return '--'
+  if (execution.success) {
+    const count = Array.isArray(execution.orders) ? execution.orders.length : 0
+    return `成功 (${count} 笔)`
+  }
+  return execution.error || '失败'
+})
+
+const latestOrderExecutionClass = computed(() => {
+  const execution = latestOrderExecution.value
+  if (!execution) return 'text-base-content/50'
+  return execution.success ? 'text-success' : 'text-error'
 })
 
 const hasStats = computed(() => {
@@ -328,6 +352,13 @@ function resetStats() {
             <div class="text-base-content/50">累计</div>
             <div class="font-medium text-base-content text-[11px]">
               {{ statsDisplay }}
+            </div>
+          </div>
+
+          <div class="col-span-2">
+            <div class="text-base-content/50">下单结果</div>
+            <div class="font-medium" :class="latestOrderExecutionClass">
+              {{ latestOrderExecutionText }}
             </div>
           </div>
         </div>

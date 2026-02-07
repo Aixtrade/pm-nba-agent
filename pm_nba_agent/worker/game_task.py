@@ -386,7 +386,7 @@ class GameTask:
             "strategy_rules": cfg.get("strategy_rules", {}),
             "timestamp": self._now_iso(),
         }
-        await self._publish_event(f"event: auto_buy_state\\ndata: {json.dumps(payload, ensure_ascii=False)}\\n\\n")
+        await self._publish_event(f"event: auto_buy_state\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n")
 
     def _extract_game_info(self, event: str, status: TaskStatus) -> bool:
         """从 scoreboard 事件提取比赛信息"""
@@ -477,7 +477,7 @@ class GameTask:
 
     @staticmethod
     def _format_sse_event(event_type: str, payload: dict[str, Any]) -> str:
-        return f"event: {event_type}\\ndata: {json.dumps(payload, ensure_ascii=False)}\\n\\n"
+        return f"event: {event_type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     @staticmethod
     def _deep_merge_dict(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:

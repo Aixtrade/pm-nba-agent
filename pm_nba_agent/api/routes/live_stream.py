@@ -109,6 +109,13 @@ def require_redis(request: Request) -> RedisClient:
     return redis
 
 
+def normalize_sse_message(message: str) -> str:
+    """兼容历史错误格式的 SSE 消息（字面量 \\n）"""
+    if "\\n" in message and "\n" not in message and message.startswith("event: "):
+        return message.replace("\\n", "\n")
+    return message
+
+
 @router.get("/subscribe/{task_id}")
 async def subscribe_task(
     request: Request,
@@ -185,7 +192,7 @@ async def subscribe_task(
                 snapshot_key = Channels.task_snapshot(task_id, event_name)
                 snapshot_event = await redis.get(snapshot_key)
                 if snapshot_event:
-                    yield snapshot_event
+                    yield normalize_sse_message(snapshot_event)
 
             async for message in pubsub.listen():
                 # 检查客户端是否断开
@@ -195,7 +202,7 @@ async def subscribe_task(
                 if message["type"] != "message":
                     continue
 
-                event_data = message["data"]
+                event_data = normalize_sse_message(message["data"])
                 yield event_data
 
                 # 如果是任务结束事件，退出循环
