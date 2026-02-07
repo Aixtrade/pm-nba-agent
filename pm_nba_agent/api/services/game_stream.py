@@ -4,7 +4,7 @@ import asyncio
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Awaitable, Callable, Optional
 
 from loguru import logger
 
@@ -38,6 +38,9 @@ from ...polymarket.strategies import StrategyRegistry
 from ...polymarket.positions import get_current_positions
 from ...models.game_data import GameData
 
+PositionProvider = Callable[[str, str, float], Awaitable[Optional[PositionContext]]]
+
+
 @dataclass
 class StrategyState:
     """策略执行状态（仅用于信号生成，不执行下单）"""
@@ -57,6 +60,7 @@ class StrategyState:
     condition_id: str = ""
     _last_position_fetch: float = 0.0
     _position_fetch_interval: float = 5.0  # 持仓获取间隔（秒）
+    position_provider: Optional[PositionProvider] = None
 
     def __post_init__(self):
         if self.position is None:
@@ -82,6 +86,22 @@ class StrategyState:
 
         if not self.proxy_address or not self.condition_id:
             return False  # 缺少必要参数
+
+        if self.position_provider is not None:
+            try:
+                position = await self.position_provider(
+                    self.yes_token_id,
+                    self.no_token_id,
+                    self._position_fetch_interval,
+                )
+                if position is None:
+                    return False
+                self.position = position
+                self._last_position_fetch = now
+                return True
+            except Exception as exc:
+                logger.warning("通过 provider 获取持仓失败: {}", exc)
+                return False
 
         try:
             positions = await get_current_positions(
@@ -249,9 +269,15 @@ class StreamState:
 class GameStreamService:
     """比赛数据流服务"""
 
-    def __init__(self, fetcher: DataFetcher, analyzer: Optional[GameAnalyzer] = None):
+    def __init__(
+        self,
+        fetcher: DataFetcher,
+        analyzer: Optional[GameAnalyzer] = None,
+        position_provider: Optional[PositionProvider] = None,
+    ):
         self._fetcher = fetcher
         self._analyzer = analyzer
+        self._position_provider = position_provider
 
     async def create_stream(
         self,
@@ -356,6 +382,7 @@ class GameStreamService:
                                 strategy_state = _init_strategy_state(
                                     polymarket_event,
                                     request,
+                                    self._position_provider,
                                 )
                                 if strategy_state:
                                     strategy_id_list = [s[0] for s in strategy_state.strategy_configs]
@@ -732,6 +759,7 @@ def _collect_polymarket_asset_ids(event_info: EventInfo) -> list[str]:
 def _init_strategy_state(
     event_info: EventInfo,
     request: LiveStreamRequest,
+    position_provider: Optional[PositionProvider] = None,
 ) -> Optional[StrategyState]:
     """从事件信息和请求参数初始化策略状态（仅用于信号生成）
 
@@ -781,6 +809,7 @@ def _init_strategy_state(
         strategy_configs=strategy_configs,
         proxy_address=proxy_address,
         condition_id=condition_id,
+        position_provider=position_provider,
     )
 
 
@@ -895,8 +924,11 @@ async def _execute_strategies(
     if snapshot is None:
         return []
 
-    # 共享：刷新持仓一次
-    await strategy_state.refresh_position()
+    # 仅在依赖持仓的策略开启时刷新持仓，避免无效轮询
+    position_required_strategies = {"locked_profit"}
+    configured_strategy_ids = {sid for sid, _ in strategy_state.strategy_configs}
+    if configured_strategy_ids & position_required_strategies:
+        await strategy_state.refresh_position()
 
     # 共享：构建 OrderBookContext 一次
     order_book = OrderBookContext.from_snapshot(snapshot)

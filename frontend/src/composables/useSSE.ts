@@ -89,6 +89,12 @@ export function useSSE() {
     onAutoBuyState: (data) => {
       gameStore.setAutoBuyState(data)
     },
+    onAutoSellState: (data) => {
+      gameStore.setAutoSellState(data)
+    },
+    onPositionState: (data) => {
+      gameStore.setPositionState(data)
+    },
     onTaskEnd: (data) => {
       taskStore.updateTaskState(data.task_id, data.state)
       if (data.task_id === taskStore.currentTaskId) {

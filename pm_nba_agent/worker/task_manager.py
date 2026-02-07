@@ -197,6 +197,14 @@ class TaskManager:
                 await task.update_config(patch)
                 logger.info("任务配置已更新: {}", task_id)
 
+            elif action == "refresh_positions" and task_id:
+                task = self._tasks.get(task_id)
+                if not task:
+                    logger.warning("任务未运行，无法刷新持仓: {}", task_id)
+                    return
+                await task.refresh_positions_once(force=True)
+                logger.info("任务持仓已刷新: {}", task_id)
+
             elif action == "shutdown":
                 logger.info("收到关闭指令")
                 self._running = False

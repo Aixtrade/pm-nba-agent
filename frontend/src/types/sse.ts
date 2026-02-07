@@ -183,6 +183,31 @@ export interface AutoBuyStateEventData {
   timestamp: string
 }
 
+export interface AutoSellStateEventData {
+  enabled: boolean
+  is_ordering: boolean
+  last_order_time?: string | null
+  last_sell_time?: Record<string, string>
+  stats: Record<string, { count: number; amount: number }>
+  default?: Record<string, unknown>
+  outcome_rules?: Record<string, unknown>
+  timestamp: string
+}
+
+export interface PositionStateEventData {
+  sides: Array<{
+    outcome: string
+    size: number
+    initial_value?: number | null
+    avg_price?: number | null
+    cur_price?: number | null
+  }>
+  loading: boolean
+  updated_at?: string | null
+  condition_id?: string | null
+  timestamp: string
+}
+
 // SSE 事件类型
 export type SSEEventType =
   | 'scoreboard'
@@ -199,6 +224,8 @@ export type SSEEventType =
   | 'task_end'
   | 'subscribed'
   | 'auto_buy_state'
+  | 'auto_sell_state'
+  | 'position_state'
 
 // SSE 事件处理器
 export interface SSEEventHandlers {
@@ -212,6 +239,8 @@ export interface SSEEventHandlers {
   onError?: (data: ErrorEventData) => void
   onGameEnd?: (data: GameEndEventData) => void
   onAutoBuyState?: (data: AutoBuyStateEventData) => void
+  onAutoSellState?: (data: AutoSellStateEventData) => void
+  onPositionState?: (data: PositionStateEventData) => void
   onOpen?: () => void
   onClose?: () => void
 }

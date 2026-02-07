@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
-import { useAuthStore, useGameStore, useToastStore } from '@/stores'
+import { computed, reactive } from 'vue'
+import { useAuthStore, useGameStore, useTaskStore, useToastStore } from '@/stores'
+import { taskService } from '@/services/taskService'
 
 const props = withDefaults(
   defineProps<{
@@ -13,6 +14,7 @@ const props = withDefaults(
 
 const authStore = useAuthStore()
 const gameStore = useGameStore()
+const taskStore = useTaskStore()
 const toastStore = useToastStore()
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 const ORDER_TYPE = 'GTC'
@@ -21,6 +23,7 @@ const POLYMARKET_PROXY_ADDRESS = 'POLYMARKET_PROXY_ADDRESS'
 
 const polymarketInfo = computed(() => gameStore.polymarketInfo)
 const bookUpdatedAt = computed(() => gameStore.polymarketBookUpdatedAt)
+const currentTaskId = computed(() => taskStore.currentTaskId)
 
 const rows = computed(() => {
   const info = polymarketInfo.value
@@ -91,38 +94,6 @@ function formatTime(timestamp: string | null): string {
 function formatSize(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '--'
   return value.toFixed(2)
-}
-
-function normalizeSides(sides: Array<{ outcome: string; size: number; initial_value?: number | null; avg_price?: number | null; cur_price?: number | null }>) {
-  return sides
-    .map(side => ({
-      outcome: String(side.outcome),
-      size: Number(side.size),
-      initial_value: side.initial_value === null || side.initial_value === undefined
-        ? null
-        : Number(side.initial_value),
-    }))
-    .sort((a, b) => a.outcome.localeCompare(b.outcome))
-}
-
-function isSameSides(
-  current: Array<{ outcome: string; size: number; initial_value?: number | null; avg_price?: number | null; cur_price?: number | null }>,
-  next: Array<{ outcome: string; size: number; initial_value?: number | null; avg_price?: number | null; cur_price?: number | null }>
-) {
-  const a = normalizeSides(current)
-  const b = normalizeSides(next)
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i += 1) {
-    if (a[i].outcome !== b[i].outcome) return false
-    if (Number.isNaN(a[i].size) || Number.isNaN(b[i].size)) return false
-    if (a[i].size !== b[i].size) return false
-    if (a[i].initial_value !== b[i].initial_value) return false
-  }
-  return true
-}
-
-function sleep(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
 function getBuySize(tokenId: string): string {
@@ -219,114 +190,20 @@ function getPolymarketConfig() {
   return { privateKey, proxyAddress }
 }
 
-function getPolymarketUserAddress() {
-  const proxyAddress = localStorage.getItem(POLYMARKET_PROXY_ADDRESS)?.trim() ?? ''
-  return { userAddress: proxyAddress, proxyAddress }
-}
-
-function getMarketOutcomes(): string[] {
-  const info = polymarketInfo.value
-  if (!info) return []
-  const outcomes = info.market_info?.outcomes?.length
-    ? info.market_info.outcomes
-    : info.tokens.map(token => token.outcome)
-  return Array.from(new Set(outcomes.filter(Boolean)))
-}
-
-function getMarketConditionId(): string | null {
-  const info = polymarketInfo.value
-  if (!info) return null
-  return info.condition_id ?? info.market_info?.condition_id ?? null
-}
-
-async function fetchMarketPositions(options: {
-  retries?: number
-  delayMs?: number
-  retryOnEmpty?: boolean
-  retryAlways?: boolean
-  skipImmediate?: boolean
-  initialDelayMs?: number
-} = {}) {
-  if (!authStore.isAuthenticated) return
-  const conditionId = getMarketConditionId()
-  if (!conditionId) return
-
-  const outcomes = getMarketOutcomes()
-  const { userAddress, proxyAddress } = getPolymarketUserAddress()
-  if (!userAddress && !proxyAddress) {
+async function requestPositionRefresh() {
+  if (!currentTaskId.value) {
+    toastStore.showToast('请先创建并订阅任务', 'warning')
+    return
+  }
+  if (!authStore.token) {
+    toastStore.showToast('请先登录', 'error')
     return
   }
 
-  const retries = options.retries ?? 0
-  const delayMs = options.delayMs ?? 1000
-  const retryOnEmpty = options.retryOnEmpty ?? false
-  const retryAlways = options.retryAlways ?? false
-  const skipImmediate = options.skipImmediate ?? false
-  const initialDelayMs = options.initialDelayMs ?? delayMs
-
-  gameStore.setPositionsLoading(true)
-  let lastError: Error | null = null
-  const totalAttempts = Math.max(1, retries + 1)
-  const startAttempt = skipImmediate ? 1 : 0
-
   try {
-    if (skipImmediate) {
-      await sleep(initialDelayMs)
-    }
-
-    for (let attempt = startAttempt; attempt < totalAttempts; attempt += 1) {
-      const step = attempt - startAttempt
-      if (step > 0) {
-        const backoff = delayMs * Math.pow(2, step - 1)
-        await sleep(backoff)
-      }
-
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/v1/polymarket/positions/market`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authStore.token}`,
-          },
-          body: JSON.stringify({
-            condition_id: conditionId,
-            user_address: userAddress || proxyAddress,
-            outcomes,
-          }),
-        })
-
-        if (!response.ok) {
-          const data = await response.json().catch(() => null)
-          throw new Error(data?.detail || '查询持仓失败')
-        }
-
-        const data = await response.json().catch(() => null)
-        const sides = Array.isArray(data?.sides) ? data.sides : []
-        const unchanged = isSameSides(positionSides.value, sides)
-        gameStore.setPositionSides(sides)
-
-        if (attempt < totalAttempts - 1) {
-          if (retryAlways && unchanged) {
-            continue
-          }
-          if (retryOnEmpty && sides.length === 0) {
-            continue
-          }
-        }
-
-        lastError = null
-        break
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error('查询持仓失败')
-        if (attempt >= totalAttempts - 1) {
-          throw lastError
-        }
-      }
-    }
+    await taskService.refreshTaskPositions(currentTaskId.value, authStore.token)
   } catch (error) {
-    toastStore.showToast(error instanceof Error ? error.message : '查询持仓失败', 'error')
-  } finally {
-    gameStore.setPositionsLoading(false)
+    toastStore.showToast(error instanceof Error ? error.message : '刷新持仓失败', 'error')
   }
 }
 
@@ -390,14 +267,7 @@ async function placeOrder(
 
     await response.json().catch(() => null)
     toastStore.showToast('下单成功', 'success')
-    void fetchMarketPositions({
-      retries: 2,
-      delayMs: 4000,
-      retryOnEmpty: true,
-      retryAlways: true,
-      skipImmediate: true,
-      initialDelayMs: 2000,
-    })
+    void requestPositionRefresh()
   } catch (error) {
     toastStore.showToast(error instanceof Error ? error.message : '下单失败', 'error')
   } finally {
@@ -409,22 +279,6 @@ function getQuickSellDisabled(outcome: string) {
   const sizeValue = positionSizeByOutcome.value[outcome] ?? 0
   return !sizeValue || Number.isNaN(sizeValue) || sizeValue <= 0
 }
-
-watch(
-  () => [polymarketInfo.value?.condition_id, polymarketInfo.value?.market_info?.condition_id],
-  async () => {
-    await fetchMarketPositions()
-  }
-)
-
-watch(
-  () => authStore.isAuthenticated,
-  async isAuthed => {
-    if (isAuthed) {
-      await fetchMarketPositions()
-    }
-  }
-)
 </script>
 
 <template>
@@ -452,7 +306,7 @@ watch(
             <button
               class="btn btn-ghost btn-xs"
               :disabled="positionsLoading"
-              @click="fetchMarketPositions()"
+              @click="requestPositionRefresh()"
               title="刷新持仓"
             >
               ↻

@@ -187,6 +187,8 @@ async def subscribe_task(
                 "scoreboard",
                 "polymarket_book",
                 "auto_buy_state",
+                "auto_sell_state",
+                "position_state",
             ]
             for event_name in snapshot_events:
                 snapshot_key = Channels.task_snapshot(task_id, event_name)

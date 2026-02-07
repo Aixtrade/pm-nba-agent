@@ -41,6 +41,7 @@ export interface CreateTaskRequest {
   private_key?: string | null
   proxy_address?: string | null
   auto_buy?: AutoBuyConfig
+  auto_sell?: AutoSellConfig
 }
 
 // 创建任务响应
@@ -94,4 +95,25 @@ export interface AutoBuyConfig {
 
 export interface UpdateTaskConfigRequest {
   patch: Record<string, unknown>
+}
+
+export interface AutoSellOutcomeRule {
+  enabled?: boolean
+  min_profit_rate?: number
+  sell_ratio?: number
+  cooldown_time?: number
+  order_type?: 'GTC' | 'GTD'
+}
+
+export interface AutoSellConfig {
+  enabled?: boolean
+  default?: {
+    min_profit_rate?: number
+    sell_ratio?: number
+    cooldown_time?: number
+    refresh_interval?: number
+    order_type?: 'GTC' | 'GTD'
+    max_stale_seconds?: number
+  }
+  outcome_rules?: Record<string, AutoSellOutcomeRule>
 }

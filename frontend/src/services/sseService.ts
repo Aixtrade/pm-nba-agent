@@ -305,6 +305,12 @@ export class SSEService {
         case 'auto_buy_state':
           this.handlers.onAutoBuyState?.(parsed)
           break
+        case 'auto_sell_state':
+          this.handlers.onAutoSellState?.(parsed)
+          break
+        case 'position_state':
+          this.handlers.onPositionState?.(parsed)
+          break
         default:
           console.warn('Unknown event type:', eventType)
       }

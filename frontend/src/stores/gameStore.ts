@@ -9,6 +9,8 @@ import type {
   PolymarketBookEventData,
   StrategySignalEventData,
   AutoBuyStateEventData,
+  AutoSellStateEventData,
+  PositionStateEventData,
 } from '@/types/sse'
 
 interface BookLevel {
@@ -117,6 +119,7 @@ export const useGameStore = defineStore('game', () => {
   const latestSignalByStrategy = ref<Record<string, StrategySignalEventData | null>>({})
   const MAX_STRATEGY_SIGNALS = 20
   const autoBuyState = ref<AutoBuyStateEventData | null>(null)
+  const autoSellState = ref<AutoSellStateEventData | null>(null)
 
   // 向后兼容的 computed
   const latestStrategySignal = computed<StrategySignalEventData | null>(() => {
@@ -350,6 +353,16 @@ export const useGameStore = defineStore('game', () => {
     autoBuyState.value = data
   }
 
+  function setAutoSellState(data: AutoSellStateEventData) {
+    autoSellState.value = data
+  }
+
+  function setPositionState(data: PositionStateEventData) {
+    positionSides.value = Array.isArray(data.sides) ? data.sides : []
+    positionsLoading.value = !!data.loading
+    positionsUpdatedAt.value = data.updated_at ?? data.timestamp ?? new Date().toISOString()
+  }
+
   function reset() {
     scoreboard.value = null
     boxscore.value = null
@@ -364,6 +377,7 @@ export const useGameStore = defineStore('game', () => {
     positionsLoading.value = false
     positionsUpdatedAt.value = null
     autoBuyState.value = null
+    autoSellState.value = null
   }
 
   return {
@@ -386,6 +400,7 @@ export const useGameStore = defineStore('game', () => {
     positionsLoading,
     positionsUpdatedAt,
     autoBuyState,
+    autoSellState,
     // 计算属性
     gameId,
     gameStatus,
@@ -407,6 +422,8 @@ export const useGameStore = defineStore('game', () => {
     setPositionSides,
     setPositionsLoading,
     setAutoBuyState,
+    setAutoSellState,
+    setPositionState,
     reset,
   }
 })

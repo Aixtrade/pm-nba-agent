@@ -125,6 +125,20 @@ class TaskService {
 
     return response.json()
   }
+
+  async refreshTaskPositions(taskId: string, token?: string): Promise<{ message: string }> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/tasks/${taskId}/positions/refresh`, {
+      method: 'POST',
+      headers: this.getHeaders(token),
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }))
+      throw new Error(error.detail || `刷新持仓失败: ${response.status}`)
+    }
+
+    return response.json()
+  }
 }
 
 export const taskService = new TaskService()

@@ -62,6 +62,7 @@ class CreateTaskRequest(BaseModel):
     private_key: str | None = Field(default=None)
     proxy_address: str | None = Field(default=None)
     auto_buy: dict[str, Any] | None = Field(default=None)
+    auto_sell: dict[str, Any] | None = Field(default=None)
 
 
 class UpdateTaskConfigRequest(BaseModel):
@@ -144,6 +145,7 @@ async def create_task(
         private_key=body.private_key,
         proxy_address=body.proxy_address,
         auto_buy=body.auto_buy or {},
+        auto_sell=body.auto_sell or {},
     )
 
     # 保存配置到 Redis
@@ -315,6 +317,26 @@ async def update_task_config(
     await redis.publish(Channels.CONTROL, control_message)
 
     return {"message": "配置更新请求已发送"}
+
+
+@router.post("/{task_id}/positions/refresh")
+async def refresh_task_positions(request: Request, task_id: str) -> dict[str, str]:
+    """触发任务立即刷新持仓"""
+    require_auth(request)
+    redis = require_redis(request)
+
+    status_key = Channels.task_status(task_id)
+    data = await redis.get(status_key)
+    if not data:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    control_message = json.dumps({
+        "action": "refresh_positions",
+        "task_id": task_id,
+    })
+    await redis.publish(Channels.CONTROL, control_message)
+
+    return {"message": "持仓刷新请求已发送"}
 
 
 def _deep_merge_dict(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:

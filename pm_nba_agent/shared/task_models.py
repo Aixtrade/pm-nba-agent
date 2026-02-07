@@ -50,6 +50,18 @@ class TaskConfig:
         },
         "strategy_rules": {},
     })
+    auto_sell: dict[str, Any] = field(default_factory=lambda: {
+        "enabled": False,
+        "default": {
+            "min_profit_rate": 5.0,
+            "sell_ratio": 100.0,
+            "cooldown_time": 30.0,
+            "refresh_interval": 3.0,
+            "order_type": "GTC",
+            "max_stale_seconds": 7.0,
+        },
+        "outcome_rules": {},
+    })
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
@@ -81,6 +93,7 @@ class TaskConfig:
             private_key=data.get("private_key"),
             proxy_address=data.get("proxy_address"),
             auto_buy=_normalize_auto_buy(data.get("auto_buy")),
+            auto_sell=_normalize_auto_sell(data.get("auto_sell")),
         )
 
     @classmethod
@@ -228,4 +241,66 @@ def _normalize_auto_buy(value: Any) -> dict[str, Any]:
         "enabled": bool(value.get("enabled", False)),
         "default": default_cfg,
         "strategy_rules": strategy_rules,
+    }
+
+
+def _normalize_auto_sell(value: Any) -> dict[str, Any]:
+    """规范化 auto_sell 配置"""
+    base = {
+        "enabled": False,
+        "default": {
+            "min_profit_rate": 5.0,
+            "sell_ratio": 100.0,
+            "cooldown_time": 30.0,
+            "refresh_interval": 3.0,
+            "order_type": "GTC",
+            "max_stale_seconds": 7.0,
+        },
+        "outcome_rules": {},
+    }
+
+    if not isinstance(value, dict):
+        return base
+
+    default_input = value.get("default")
+    if isinstance(default_input, dict):
+        default_cfg = {
+            **base["default"],
+            "min_profit_rate": float(default_input.get("min_profit_rate", base["default"]["min_profit_rate"])),
+            "sell_ratio": float(default_input.get("sell_ratio", base["default"]["sell_ratio"])),
+            "cooldown_time": float(default_input.get("cooldown_time", base["default"]["cooldown_time"])),
+            "refresh_interval": float(default_input.get("refresh_interval", base["default"]["refresh_interval"])),
+            "order_type": str(default_input.get("order_type", base["default"]["order_type"])),
+            "max_stale_seconds": float(default_input.get("max_stale_seconds", base["default"]["max_stale_seconds"])),
+        }
+    else:
+        default_cfg = dict(base["default"])
+
+    outcome_rules: dict[str, Any] = {}
+    raw_rules = value.get("outcome_rules")
+    if isinstance(raw_rules, dict):
+        for outcome, raw_rule in raw_rules.items():
+            if not isinstance(outcome, str) or not outcome:
+                continue
+            if not isinstance(raw_rule, dict):
+                continue
+
+            rule: dict[str, Any] = {
+                "enabled": bool(raw_rule.get("enabled", False)),
+            }
+            if raw_rule.get("min_profit_rate") is not None:
+                rule["min_profit_rate"] = float(raw_rule.get("min_profit_rate"))
+            if raw_rule.get("sell_ratio") is not None:
+                rule["sell_ratio"] = float(raw_rule.get("sell_ratio"))
+            if raw_rule.get("cooldown_time") is not None:
+                rule["cooldown_time"] = float(raw_rule.get("cooldown_time"))
+            if raw_rule.get("order_type") is not None:
+                rule["order_type"] = str(raw_rule.get("order_type"))
+
+            outcome_rules[outcome] = rule
+
+    return {
+        "enabled": bool(value.get("enabled", False)),
+        "default": default_cfg,
+        "outcome_rules": outcome_rules,
     }
