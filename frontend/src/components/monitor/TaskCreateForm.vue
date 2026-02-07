@@ -33,6 +33,7 @@ const emit = defineEmits<{
 const STORAGE_KEY = 'pm_nba_agent_sources'
 const SELECTED_KEY = 'pm_nba_agent_selected_source'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
+const POLYMARKET_PRIVATE_KEY = 'POLYMARKET_PRIVATE_KEY'
 const POLYMARKET_PROXY_ADDRESS = 'POLYMARKET_PROXY_ADDRESS'
 
 const sources = ref<MonitorSource[]>([])
@@ -203,6 +204,7 @@ async function handleAddSource() {
 function handleCreateTask() {
   if (!canCreate.value || !currentSource.value) return
 
+  const privateKey = localStorage.getItem(POLYMARKET_PRIVATE_KEY)?.trim() || null
   const proxyAddress = localStorage.getItem(POLYMARKET_PROXY_ADDRESS)?.trim() || null
 
   createError.value = null
@@ -216,6 +218,7 @@ function handleCreateTask() {
     analysis_interval: analysisInterval.value,
     strategy_ids: selectedStrategyIds.value.length > 0 ? selectedStrategyIds.value : undefined,
     strategy_params_map: {},
+    private_key: privateKey,
     proxy_address: proxyAddress,
   }
 

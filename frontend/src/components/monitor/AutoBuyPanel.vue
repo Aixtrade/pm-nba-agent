@@ -5,6 +5,8 @@ import { taskService } from '@/services/taskService'
 
 const BOTH_SIDE = '__BOTH__'
 const STRATEGY_ID = 'merge_long'
+const POLYMARKET_PRIVATE_KEY = 'POLYMARKET_PRIVATE_KEY'
+const POLYMARKET_PROXY_ADDRESS = 'POLYMARKET_PROXY_ADDRESS'
 
 const authStore = useAuthStore()
 const gameStore = useGameStore()
@@ -167,10 +169,15 @@ async function pushConfigPatch() {
 
   requestPending.value = true
   try {
+    const privateKey = localStorage.getItem(POLYMARKET_PRIVATE_KEY)?.trim() || null
+    const proxyAddress = localStorage.getItem(POLYMARKET_PROXY_ADDRESS)?.trim() || null
+
     await taskService.updateTaskConfig(
       currentTaskId.value,
       {
         patch: {
+          private_key: privateKey,
+          proxy_address: proxyAddress,
           auto_buy: {
             enabled: formEnabled.value,
             strategy_rules: {

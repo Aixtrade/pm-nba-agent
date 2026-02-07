@@ -203,10 +203,8 @@ class GameTask:
         amount = float(rule.get("amount", default_cfg.get("amount", 10.0)))
         round_size = bool(rule.get("round_size", default_cfg.get("round_size", False)))
         order_type = str(rule.get("order_type", default_cfg.get("order_type", "GTC")))
-        execution_mode = str(rule.get("execution_mode", default_cfg.get("execution_mode", "SIMULATION"))).upper()
-
-        private_key = default_cfg.get("private_key") or self.config.private_key
-        proxy_address = default_cfg.get("proxy_address") or self.config.proxy_address
+        private_key = self.config.private_key
+        proxy_address = self.config.proxy_address
 
         outcomes = self._resolve_target_outcomes(side)
         orders: list[dict[str, Any]] = []
@@ -218,6 +216,14 @@ class GameTask:
                     "success": False,
                     "orders": [],
                     "error": "amount 必须大于 0",
+                    "source": "task_auto_buy",
+                    "strategy_id": strategy_id,
+                }
+            if not private_key:
+                return {
+                    "success": False,
+                    "orders": [],
+                    "error": "private_key 不能为空",
                     "source": "task_auto_buy",
                     "strategy_id": strategy_id,
                 }
@@ -243,11 +249,6 @@ class GameTask:
                     "order_type": order_type,
                     "outcome": outcome,
                 }
-
-                if execution_mode == "SIMULATION":
-                    orders.append({**order_info, "status": "SIMULATED"})
-                    self._record_auto_buy_stat(outcome, amount)
-                    continue
 
                 try:
                     result = await create_polymarket_order(
