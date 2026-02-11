@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
-import { useAuthStore, useGameStore, useTaskStore, useToastStore } from '@/stores'
-import { taskService } from '@/services/taskService'
+import { computed, reactive } from 'vue'
+import { useAuthStore, useGameStore, useToastStore } from '@/stores'
+import { submitOrder, getPolymarketConfig, requestPositionRefresh } from '@/composables/usePolymarketOrder'
+import ConditionAutoBuyPanel from '@/components/monitor/ConditionAutoBuyPanel.vue'
+import PeriodicBuyPanel from '@/components/monitor/PeriodicBuyPanel.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -14,20 +16,10 @@ const props = withDefaults(
 
 const authStore = useAuthStore()
 const gameStore = useGameStore()
-const taskStore = useTaskStore()
 const toastStore = useToastStore()
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
-const ORDER_TYPE = 'GTC'
-const POLYMARKET_PRIVATE_KEY = 'POLYMARKET_PRIVATE_KEY'
-const POLYMARKET_PROXY_ADDRESS = 'POLYMARKET_PROXY_ADDRESS'
-const AUTO_BUY_CONFIG_KEY = 'POLYMARKET_LOCAL_AUTO_BUY_CONFIG_V1'
-const AUTO_BUY_DEFAULT_TRIGGER_PRICE = 0.45
-const AUTO_BUY_DEFAULT_BUDGET = 10
-const AUTO_BUY_DEFAULT_COOLDOWN = 60
 
 const polymarketInfo = computed(() => gameStore.polymarketInfo)
 const bookUpdatedAt = computed(() => gameStore.polymarketBookUpdatedAt)
-const currentTaskId = computed(() => taskStore.currentTaskId)
 
 const rows = computed(() => {
   const info = polymarketInfo.value
@@ -56,13 +48,6 @@ const sellSizeByToken = reactive<Record<string, string>>({})
 const sellPriceByToken = reactive<Record<string, string>>({})
 const sellPriceLocked = reactive<Record<string, boolean>>({})
 const submitting = reactive<Record<string, boolean>>({})
-const autoBuyRuleEnabledByOutcome = reactive<Record<string, boolean>>({})
-const autoBuyTriggerPriceByOutcome = reactive<Record<string, string>>({})
-const autoBuyBudgetByOutcome = reactive<Record<string, string>>({})
-const autoBuyCooldownByOutcome = reactive<Record<string, string>>({})
-const autoBuySubmittingByOutcome = reactive<Record<string, boolean>>({})
-const autoBuyLastBuyAtByOutcome = reactive<Record<string, number>>({})
-const autoBuySweepPending = ref(false)
 
 // 使用 store 中的持仓数据
 const positionSides = computed(() => gameStore.positionSides)
@@ -78,28 +63,6 @@ const positionSizeByOutcome = computed(() => {
     }
   })
   return map
-})
-
-watch(rows, (nextRows) => {
-  nextRows.forEach((row) => {
-    if (autoBuyRuleEnabledByOutcome[row.outcome] === undefined) {
-      autoBuyRuleEnabledByOutcome[row.outcome] = false
-    }
-    if (autoBuyTriggerPriceByOutcome[row.outcome] === undefined) {
-      const fallbackPrice = row.bestAsk ?? AUTO_BUY_DEFAULT_TRIGGER_PRICE
-      autoBuyTriggerPriceByOutcome[row.outcome] = fallbackPrice.toFixed(3)
-    }
-    if (autoBuyBudgetByOutcome[row.outcome] === undefined) {
-      autoBuyBudgetByOutcome[row.outcome] = AUTO_BUY_DEFAULT_BUDGET.toString()
-    }
-    if (autoBuyCooldownByOutcome[row.outcome] === undefined) {
-      autoBuyCooldownByOutcome[row.outcome] = AUTO_BUY_DEFAULT_COOLDOWN.toString()
-    }
-  })
-}, { immediate: true })
-
-watch(rows, () => {
-  void runAutoBuySweep()
 })
 
 
@@ -216,166 +179,6 @@ function getOrderSize(side: 'BUY' | 'SELL', tokenId: string): number {
   const sizeStr = side === 'BUY' ? getBuySize(tokenId) : getSellSize(tokenId)
   return Number(sizeStr)
 }
-
-function getPolymarketConfig() {
-  const privateKey = localStorage.getItem(POLYMARKET_PRIVATE_KEY)?.trim() ?? ''
-  const proxyAddress = localStorage.getItem(POLYMARKET_PROXY_ADDRESS)?.trim() ?? ''
-  return { privateKey, proxyAddress }
-}
-
-function loadAutoBuyConfig() {
-  try {
-    const raw = localStorage.getItem(AUTO_BUY_CONFIG_KEY)
-    if (!raw) return
-    const parsed = JSON.parse(raw) as {
-      rules?: Record<string, { enabled?: boolean; trigger?: string; budget?: string; cooldown?: string }>
-    }
-
-    const rules = parsed.rules ?? {}
-    Object.entries(rules).forEach(([outcome, rule]) => {
-      autoBuyRuleEnabledByOutcome[outcome] = !!rule.enabled
-      if (rule.trigger !== undefined) autoBuyTriggerPriceByOutcome[outcome] = rule.trigger
-      if (rule.budget !== undefined) autoBuyBudgetByOutcome[outcome] = rule.budget
-      if (rule.cooldown !== undefined) autoBuyCooldownByOutcome[outcome] = rule.cooldown
-    })
-  } catch {
-    // ignore invalid local config
-  }
-}
-
-function saveAutoBuyConfig() {
-  const rules: Record<string, { enabled: boolean; trigger: string; budget: string; cooldown: string }> = {}
-  rows.value.forEach((row) => {
-    rules[row.outcome] = {
-      enabled: !!autoBuyRuleEnabledByOutcome[row.outcome],
-      trigger: autoBuyTriggerPriceByOutcome[row.outcome] ?? AUTO_BUY_DEFAULT_TRIGGER_PRICE.toFixed(3),
-      budget: autoBuyBudgetByOutcome[row.outcome] ?? AUTO_BUY_DEFAULT_BUDGET.toString(),
-      cooldown: autoBuyCooldownByOutcome[row.outcome] ?? AUTO_BUY_DEFAULT_COOLDOWN.toString(),
-    }
-  })
-
-  localStorage.setItem(AUTO_BUY_CONFIG_KEY, JSON.stringify({
-    rules,
-  }))
-}
-
-loadAutoBuyConfig()
-
-function onAutoBuyRuleChange() {
-  saveAutoBuyConfig()
-  void runAutoBuySweep()
-}
-
-function parsePositiveNumber(value: string): number | null {
-  const num = Number(value)
-  if (Number.isNaN(num) || num <= 0) return null
-  return num
-}
-
-async function submitOrder(
-  payload: {
-    tokenId: string
-    side: 'BUY' | 'SELL'
-    price: number
-    size: number
-  }
-): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/polymarket/orders`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${authStore.token}`,
-    },
-    body: JSON.stringify({
-      token_id: payload.tokenId,
-      side: payload.side,
-      price: payload.price,
-      size: payload.size,
-      order_type: ORDER_TYPE,
-      private_key: getPolymarketConfig().privateKey,
-      proxy_address: getPolymarketConfig().proxyAddress,
-    }),
-  })
-
-  if (!response.ok) {
-    const data = await response.json().catch(() => null)
-    throw new Error(data?.detail || '下单失败')
-  }
-
-  await response.json().catch(() => null)
-}
-
-async function runAutoBuySweep() {
-  if (autoBuySweepPending.value) return
-  if (!authStore.isAuthenticated || !authStore.token) return
-
-  const { privateKey, proxyAddress } = getPolymarketConfig()
-  if (!privateKey || !proxyAddress) return
-
-  autoBuySweepPending.value = true
-  try {
-    for (const row of rows.value) {
-      const outcome = row.outcome
-      if (!autoBuyRuleEnabledByOutcome[outcome]) continue
-      if (autoBuySubmittingByOutcome[outcome]) continue
-      if (row.bestAsk === null || Number.isNaN(row.bestAsk) || row.bestAsk <= 0 || row.bestAsk >= 1) continue
-
-      const triggerPrice = parsePositiveNumber(autoBuyTriggerPriceByOutcome[outcome] ?? '')
-      const budget = parsePositiveNumber(autoBuyBudgetByOutcome[outcome] ?? '')
-      const cooldown = parsePositiveNumber(autoBuyCooldownByOutcome[outcome] ?? '') ?? AUTO_BUY_DEFAULT_COOLDOWN
-      if (triggerPrice === null || budget === null) continue
-      if (triggerPrice >= 1) continue
-      if (row.bestAsk > triggerPrice) continue
-
-      const now = Date.now()
-      const lastBuyAt = autoBuyLastBuyAtByOutcome[outcome] ?? 0
-      if (now - lastBuyAt < cooldown * 1000) continue
-
-      const size = Number((budget / row.bestAsk).toFixed(2))
-      if (!size || Number.isNaN(size) || size <= 0) continue
-
-      autoBuySubmittingByOutcome[outcome] = true
-      try {
-        // 成功或失败都进入冷却，避免连续重试
-        autoBuyLastBuyAtByOutcome[outcome] = now
-        await submitOrder({
-          tokenId: row.tokenId,
-          side: 'BUY',
-          price: row.bestAsk,
-          size,
-        })
-        toastStore.showToast(`自动买入成功 ${outcome} @ ${row.bestAsk.toFixed(3)} (${size})`, 'success')
-        if (currentTaskId.value) {
-          void requestPositionRefresh()
-        }
-      } catch (error) {
-        toastStore.showToast(error instanceof Error ? error.message : '自动买入失败', 'error')
-      } finally {
-        autoBuySubmittingByOutcome[outcome] = false
-      }
-    }
-  } finally {
-    autoBuySweepPending.value = false
-  }
-}
-
-async function requestPositionRefresh() {
-  if (!currentTaskId.value) {
-    toastStore.showToast('请先创建并订阅任务', 'warning')
-    return
-  }
-  if (!authStore.token) {
-    toastStore.showToast('请先登录', 'error')
-    return
-  }
-
-  try {
-    await taskService.refreshTaskPositions(currentTaskId.value, authStore.token)
-  } catch (error) {
-    toastStore.showToast(error instanceof Error ? error.message : '刷新持仓失败', 'error')
-  }
-}
-
 
 
 async function placeOrder(
@@ -642,66 +445,9 @@ function getQuickSellDisabled(outcome: string) {
               </div>
             </div>
           </div>
-        </div>
-      </div>
 
-      <div class="mt-3 rounded-lg border border-base-200/70 px-3 py-2 ring-1 ring-base-content/20">
-        <div class="text-sm font-semibold">自动买入（前端本地）</div>
-        <div class="mt-2 space-y-2">
-          <div
-            v-for="row in rows"
-            :key="`auto-buy-${row.tokenId}`"
-            class="rounded-md bg-base-100/60 px-2 py-2"
-          >
-            <div class="flex items-center justify-between gap-2 text-xs">
-              <div class="font-semibold">{{ row.outcome }}</div>
-              <label class="flex items-center gap-1">
-                <input
-                  v-model="autoBuyRuleEnabledByOutcome[row.outcome]"
-                  type="checkbox"
-                  class="toggle toggle-xs toggle-success"
-                  @change="onAutoBuyRuleChange"
-                />
-                <span class="text-base-content/60">自动买入</span>
-              </label>
-            </div>
-            <div class="mt-2 grid grid-cols-3 gap-2 text-[11px]">
-              <label>
-                <div class="text-base-content/50">触发价 ≤</div>
-                <input
-                  v-model="autoBuyTriggerPriceByOutcome[row.outcome]"
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.001"
-                  class="input input-bordered input-xs w-full"
-                  @change="onAutoBuyRuleChange"
-                />
-              </label>
-              <label>
-                <div class="text-base-content/50">预算 USDC</div>
-                <input
-                  v-model="autoBuyBudgetByOutcome[row.outcome]"
-                  type="number"
-                  min="1"
-                  step="1"
-                  class="input input-bordered input-xs w-full"
-                  @change="onAutoBuyRuleChange"
-                />
-              </label>
-              <label>
-                <div class="text-base-content/50">冷却秒数</div>
-                <input
-                  v-model="autoBuyCooldownByOutcome[row.outcome]"
-                  type="number"
-                  min="1"
-                  step="1"
-                  class="input input-bordered input-xs w-full"
-                  @change="onAutoBuyRuleChange"
-                />
-              </label>
-            </div>
-          </div>
+          <ConditionAutoBuyPanel :token-id="row.tokenId" :outcome="row.outcome" :best-ask="row.bestAsk" />
+          <PeriodicBuyPanel :token-id="row.tokenId" :outcome="row.outcome" :best-ask="row.bestAsk" />
         </div>
       </div>
 
