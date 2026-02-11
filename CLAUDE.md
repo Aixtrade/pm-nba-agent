@@ -2,139 +2,149 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 项目概述
+## Project Overview
 
-PM NBA Agent 是一个 NBA 比赛实时分析与 Polymarket 交易系统。包含 Python 后端（FastAPI + SSE）和 Vue3 前端监控界面。
+PM NBA Agent — real-time NBA game analysis + Polymarket trading system. Python backend (FastAPI + SSE) with Vue3 frontend dashboard.
 
-- 包名: pm-nba-agent
-- Python 版本: >= 3.12
-- 依赖管理器: uv
-- 后端: pm_nba_agent/
-- 前端: frontend/ (Vue3 + Vite + TailwindCSS + DaisyUI)
+- Python >= 3.12, dependency manager: **uv**
+- Backend: `pm_nba_agent/`
+- Frontend: `frontend/` (Vue3 + Vite + TailwindCSS v4 + DaisyUI v5)
+- No lint/format tooling configured
 
-## 开发命令
+## Development Commands
 
-### 后端
+### Backend
 ```bash
-# 安装依赖
-uv sync
+uv sync                          # Install dependencies
+uv run uvicorn pm_nba_agent.api.app:app --host 0.0.0.0 --port 8000 --reload  # Dev server
 
-# 启动 API 服务（开发）
-uv run uvicorn pm_nba_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
-
-# 运行测试（脚本式，非 pytest）
+# Tests are script-style (not pytest), hit live NBA APIs
 uv run python tests/test_today_games.py
 uv run python tests/test_full_flow.py
-
-# 运行示例
-uv run python examples/example.py
 ```
 
-### 前端
+### Frontend
 ```bash
 cd frontend
-pnpm install  # 或 npm install
-pnpm dev      # 启动开发服务器 (端口 3000)
-pnpm build    # 构建生产版本
-pnpm type-check  # TypeScript 类型检查
+pnpm install
+pnpm dev          # Dev server (port 3000)
+pnpm build        # Production build
+pnpm type-check   # TypeScript type checking
 ```
 
-### Docker 部署
+### Docker (4 services: redis, backend, worker, frontend)
 ```bash
-cp .env.example .env  # 配置环境变量
+cp .env.example .env
 docker compose up -d
-# 前端: http://localhost, API: http://localhost/api/docs
+# Frontend: http://localhost:8080, API proxied at http://localhost:8080/api/*
 ```
 
-## 架构概览
+## Architecture
 
-### 系统架构
+### System Overview
 ```
-前端 (Vue3) <-- SSE --> FastAPI API <-- WebSocket --> Polymarket
-                            |
-                            v
-                      NBA API (nba_api)
+Frontend (Vue3) <-- SSE --> FastAPI API <-- WebSocket --> Polymarket
+                                |
+                                v
+                          NBA API (nba_api)
+                                |
+                          Redis (optional)
+                                |
+                          Worker (background tasks)
 ```
 
-### 后端模块 (pm_nba_agent/)
-- `api/`: FastAPI 应用，SSE 实时数据流
-  - `app.py`: 应用入口，生命周期管理
-  - `routes/live_stream.py`: SSE 流端点
-  - `services/game_stream.py`: 核心数据流服务，整合 NBA 数据、Polymarket 订单簿、策略执行
-- `nba/`: NBA 数据获取（team_resolver, game_finder, live_stats, playbyplay）
-- `polymarket/`: Polymarket 交易集成
-  - `ws_client.py`, `book_stream.py`: WebSocket 订单簿订阅
-  - `strategies/`: 交易策略框架（BaseStrategy, StrategyRegistry）
-  - `executor.py`: 策略执行器
-  - `orders.py`, `positions.py`: 订单与持仓管理
-- `agent/`: AI 分析模块（GameAnalyzer, GameContext, LLMClient）
-- `pregame/`: 赛前分析（数据采集器 + 分析器）
-- `models/`: 数据模型（GameData, TeamStats, PlayerStats）
-- `parsers/`: Polymarket URL 解析
+Two operating modes:
+1. **Direct streaming** — frontend opens SSE to `/api/v1/live/stream`, backend streams data directly (no Redis needed)
+2. **Task mode** — frontend creates a background task via `/api/v1/tasks/create`, worker process picks it up from Redis, frontend subscribes via `/api/v1/live/subscribe/{task_id}`
 
-### 前端模块 (frontend/src/)
-- `views/MonitorView.vue`: 主监控页面
-- `components/monitor/`: 监控组件
-  - `ScoreBoard.vue`: 比分板
-  - `BoxScore.vue`, `PlayerStatsTable.vue`: 统计面板
-  - `PolymarketBookPanel.vue`: 订单簿显示
-  - `StrategySignalPanel.vue`: 策略信号
-  - `AgentAnalysisPanel.vue`: AI 分析
-  - `StreamConfig.vue`: 流配置
-  - `StrategySidebar.vue`: 策略侧边栏
+### Backend Modules (`pm_nba_agent/`)
+- `api/` — FastAPI app, routes, services
+  - `routes/`: `live_stream.py` (SSE), `tasks.py` (background tasks CRUD), `auth.py` (JWT login), `orders.py`, `positions.py`, `parse.py`
+  - `services/game_stream.py` — core: integrates NBA data + Polymarket orderbook + strategy execution
+- `nba/` — NBA data fetching (team_resolver, game_finder, live_stats, playbyplay)
+- `polymarket/` — trading integration
+  - `ws_client.py`, `book_stream.py` — WebSocket orderbook subscription
+  - `strategies/` — strategy framework (see "Strategies" section)
+  - `executor.py` — strategy executor
+  - `orders.py`, `positions.py` — order placement & position queries
+- `agent/` — AI analysis (GameAnalyzer, GameContext, LLMClient)
+- `worker/` — background task processor (`main.py`, `task_manager.py`, `game_task.py`)
+- `shared/` — Redis client, task models, pub/sub channels
+- `models/` — data models (GameData, TeamStats, PlayerStats)
+- `parsers/` — Polymarket URL parsing
 
-### 数据流
-1. 前端发起 SSE 连接 → `POST /api/v1/live/stream`
-2. `GameStreamService` 解析 Polymarket URL，获取市场信息
-3. 订阅 Polymarket WebSocket 获取实时订单簿
-4. 轮询 NBA API 获取比分、统计、逐回合数据
-5. 策略引擎根据订单簿变化生成交易信号
-6. AI 分析器定时分析比赛态势
-7. 所有数据通过 SSE 推送到前端
+### Frontend Modules (`frontend/src/`)
+- **Stores** (Pinia): `gameStore` (game data + signals), `taskStore` (background tasks), `authStore` (JWT), `connectionStore` (SSE state), `toastStore`
+- **Services**: `sseService.ts` (SSE connection + auto-reconnect), `autoBuyService.ts` (auto-execute merge_long signals), `taskService.ts` (task CRUD)
+- **Composables**: `useSSE.ts` (wires SSE events → stores)
+- **Views**: `MonitorView.vue` (main dashboard)
+- **Components**: `monitor/` — ScoreBoard, BoxScore, PolymarketBookPanel, StrategySignalPanel, StrategySidebar, StreamConfig, AgentAnalysisPanel
 
-### SSE 事件类型
-- `scoreboard`: 比分更新
-- `boxscore`: 详细统计
-- `polymarket_info`: 市场元信息
-- `polymarket_book`: 订单簿更新
-- `strategy_signal`: 交易信号
-- `analysis_chunk`: AI 分析流式输出
-- `game_end`: 比赛结束
-- `heartbeat`: 心跳
-- `error`: 错误
+### Data Flow (Direct Streaming)
+1. Frontend SSE → `POST /api/v1/live/stream`
+2. `GameStreamService` parses Polymarket URL, gets market info
+3. Subscribes Polymarket WebSocket for live orderbook
+4. Polls NBA API for scores, stats, play-by-play
+5. Strategy engine generates signals on orderbook changes
+6. AI analyzer periodically analyzes game state
+7. All data pushed to frontend via SSE events
 
-## 代码规范
+### SSE Event Types
+`scoreboard`, `boxscore`, `polymarket_info`, `polymarket_book`, `strategy_signal`, `analysis_chunk`, `game_end`, `heartbeat`, `error`, `task_status`, `task_end`, `subscribed`, `auto_buy_state`, `auto_sell_state`, `auto_sell_execution`, `position_state`
+
+## Strategies
+
+### Available Strategies
+- **`merge_long`** (Binary Merge Long) — arbitrage when YES+NO cost < 1.0
+- **`locked_profit`** (Locked Profit) — hedge to lock in target profit
+
+### Multi-Strategy Support
+`LiveStreamRequest` accepts both `strategy_id` (single, backward-compat) and `strategy_ids` (multi). `get_effective_strategy_configs()` unifies both into `list[tuple[str, dict]]`. Frontend `gameStore` stores signals per-strategy (`strategySignalsByStrategy`, `latestSignalByStrategy`). `StrategySidebar.vue` renders one `StrategySignalPanel` per active strategy.
+
+### Adding a New Strategy
+1. Create file in `pm_nba_agent/polymarket/strategies/`
+2. Inherit `BaseStrategy`, implement `strategy_id` property and `generate_signal()`
+3. Register with `@StrategyRegistry.register("strategy_id")` decorator
+
+### Auto-Buy
+`autoBuyService` subscribes to `sseService.subscribeStrategySignal()` and filters for `merge_long` BUY signals only.
+
+## Authentication
+- JWT-based via `config/users.yaml` (accounts) + `LOGIN_PASSPHRASE` + `LOGIN_TOKEN_SALT`
+- Login endpoint: `POST /api/v1/auth/login`
+- Tasks are user-scoped
+
+## Environment Variables
+```bash
+OPENAI_API_KEY=sk-...            # AI analysis (optional)
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4o-mini
+ANALYSIS_INTERVAL=30             # Seconds between AI analyses
+ANALYSIS_EVENT_INTERVAL=15
+LOGIN_PASSPHRASE=change-me       # Auth passphrase
+LOGIN_TOKEN_SALT=change-me-salt  # JWT salt
+REDIS_URL=                       # Optional; enables task mode (redis://localhost:6379/0)
+```
+
+## Code Conventions
 
 ### Python
-- 类型注解使用 Python 3.12 内置泛型: `list[T]`, `dict[K, V]`
-- dataclass 配合 `from_*` 工厂方法和 `to_dict()` 序列化
-- 外部 API 调用使用 try/except，失败返回 None
-- NBA API 调用前必须 `time.sleep(0.6)` 限流
-- 日志使用 loguru: `from loguru import logger`
+- Type annotations with Python 3.12 builtins: `list[T]`, `dict[K, V]`, `X | None`
+- `dataclass` with `from_*()` factory classmethods and `to_dict()` serialization
+- External API calls wrapped in try/except, return `None` on failure
+- NBA API calls must have `time.sleep(0.6)` rate limiting — do not remove
+- Logging: `from loguru import logger`
+- Double-quoted strings; f-strings for interpolation
 
-### 前端
+### Frontend
 - Vue3 Composition API + `<script setup>`
-- Pinia 状态管理
+- Pinia state management
 - TailwindCSS v4 + DaisyUI v5
 
-## 添加新策略
-
-1. 在 `pm_nba_agent/polymarket/strategies/` 创建策略文件
-2. 继承 `BaseStrategy`，实现 `strategy_id` 和 `generate_signal()`
-3. 使用 `@StrategyRegistry.register("strategy_id")` 装饰器注册
-4. 策略通过 `LiveStreamRequest.strategy_id` 参数选择
-
-## 环境变量
-
-```bash
-OPENAI_API_KEY=sk-...      # AI 分析（可选）
-OPENAI_MODEL=gpt-4o-mini   # 模型选择
-ANALYSIS_INTERVAL=30       # 分析间隔（秒）
-```
-
-## 重要限制
-
-- 不要移除 NBA API 的 `time.sleep(0.6)` 限流
-- NBA API 时间为美国东部时间 (EST/EDT)
-- Live API 仅适用于当天比赛
-- Polymarket WebSocket 需要有效的 token_id 列表
+## Important Constraints
+- **Never remove** `time.sleep(0.6)` rate limiting on NBA API calls
+- NBA API times are US Eastern (EST/EDT)
+- Live API only works for same-day games
+- Polymarket WebSocket requires valid `token_id` list
+- Tests hit live APIs — failures may be due to no scheduled games, not bugs
+- Avoid parallel test runs (API throttling)
