@@ -7,7 +7,7 @@
  * - 市场状态（价格和、套利空间）
  * - 信号历史
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 interface SignalData {
   type: 'BUY' | 'SELL' | 'HOLD'
@@ -63,12 +63,14 @@ const props = withDefaults(
   }>(),
   {
     strategyId: 'merge_long',
-    maxHistory: 5,
+    maxHistory: 2,
   }
 )
 
 const latestSignal = computed(() => props.signals[0] ?? null)
 const signalHistory = computed(() => props.signals.slice(1, props.maxHistory))
+const allHistory = computed(() => props.signals.slice(1))
+const showHistoryModal = ref(false)
 const MAX_METRICS = 3
 
 const topMetrics = computed(() => {
@@ -127,11 +129,21 @@ function formatMetricValue(v: MetricData['value']): string {
 </script>
 
 <template>
+  <div>
   <div class="card glass-card ring-1 ring-base-content/30 ring-offset-2 ring-offset-base-100">
     <div class="card-body">
       <!-- 标题栏 -->
       <div class="flex items-center justify-between gap-3">
-        <h3 class="card-title text-base">策略信号</h3>
+        <div class="flex items-center gap-2">
+          <h3 class="card-title text-base">策略信号</h3>
+          <button
+            v-if="allHistory.length > 0"
+            class="btn btn-ghost btn-xs text-base-content/50"
+            @click="showHistoryModal = true"
+          >
+            全部 ({{ allHistory.length }})
+          </button>
+        </div>
         <div class="flex items-center gap-2 text-xs text-base-content/60">
           <span>{{ strategyId }}</span>
           <span v-if="latestSignal" class="text-base-content/40">·</span>
@@ -203,7 +215,6 @@ function formatMetricValue(v: MetricData['value']): string {
 
       <!-- 信号历史 -->
       <div v-if="signalHistory.length > 0" class="mt-3 pt-3 border-t border-base-200/70">
-        <div class="mb-2 text-xs font-medium text-base-content/50">历史</div>
         <div class="space-y-1">
           <div
             v-for="(sig, index) in signalHistory"
@@ -223,5 +234,55 @@ function formatMetricValue(v: MetricData['value']): string {
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- 历史信号对话框 -->
+  <Teleport to="body">
+  <dialog class="modal" :class="{ 'modal-open': showHistoryModal }">
+    <div class="modal-box max-w-lg max-h-[70vh]! overflow-hidden flex flex-col">
+      <div class="flex items-center justify-between mb-3 shrink-0">
+        <h3 class="font-bold text-base">信号历史 · {{ strategyId }}</h3>
+        <button class="btn btn-sm btn-circle btn-ghost" @click="showHistoryModal = false">✕</button>
+      </div>
+      <div class="overflow-y-auto min-h-0 flex-1 space-y-1.5 pr-1">
+        <div
+          v-for="(sig, index) in allHistory"
+          :key="`modal-${sig.timestamp}-${index}`"
+          class="flex items-start gap-2 text-xs py-1"
+          :class="{ 'border-b border-base-200/50': index < allHistory.length - 1 }"
+        >
+          <span class="w-16 shrink-0 text-base-content/40 pt-0.5">
+            {{ formatTime(sig.timestamp) }}
+          </span>
+          <span class="badge badge-xs shrink-0 mt-0.5" :class="signalBadgeClass(sig.signal?.type)">
+            {{ signalTypeLabel(sig.signal?.type) }}
+          </span>
+          <div class="flex-1 min-w-0">
+            <div class="text-base-content/80">{{ sig.signal?.reason }}</div>
+            <div
+              v-if="sig.signal?.type === 'BUY' || sig.signal?.type === 'SELL'"
+              class="mt-0.5 flex items-center gap-3 text-base-content/50"
+            >
+              <span><span class="text-emerald-600">Y</span> {{ formatSize(sig.signal?.yes_size) }}@{{ formatPrice(sig.signal?.yes_price) }}</span>
+              <span><span class="text-rose-600">N</span> {{ formatSize(sig.signal?.no_size) }}@{{ formatPrice(sig.signal?.no_price) }}</span>
+              <span
+                v-if="sig.execution"
+                :class="sig.execution.success ? 'text-success' : 'text-error'"
+              >
+                {{ sig.execution.success ? '✓' : '✗' }}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div v-if="allHistory.length === 0" class="py-6 text-center text-sm text-base-content/50">
+          暂无历史信号
+        </div>
+      </div>
+    </div>
+    <form method="dialog" class="modal-backdrop" @click="showHistoryModal = false">
+      <button>close</button>
+    </form>
+  </dialog>
+  </Teleport>
   </div>
 </template>

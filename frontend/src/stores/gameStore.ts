@@ -117,7 +117,7 @@ export const useGameStore = defineStore('game', () => {
   // 按策略分组的信号存储
   const strategySignalsByStrategy = ref<Record<string, StrategySignalEventData[]>>({})
   const latestSignalByStrategy = ref<Record<string, StrategySignalEventData | null>>({})
-  const MAX_STRATEGY_SIGNALS = 20
+  const MAX_STRATEGY_SIGNALS = 100
   const autoBuyState = ref<AutoBuyStateEventData | null>(null)
   const autoSellState = ref<AutoSellStateEventData | null>(null)
 
