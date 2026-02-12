@@ -47,6 +47,7 @@ class CreateTaskRequest(BaseModel):
     poll_interval: float = Field(default=10.0, ge=5.0, le=60.0)
     include_scoreboard: bool = Field(default=True)
     include_boxscore: bool = Field(default=True)
+    enable_analysis: bool = Field(default=True)
     analysis_interval: float = Field(default=30.0, ge=10.0, le=120.0)
     strategy_ids: list[str] | None = Field(default=None)
     strategy_params_map: dict[str, dict[str, Any]] | None = Field(default=None)
@@ -140,6 +141,7 @@ async def create_task(
         poll_interval=body.poll_interval,
         include_scoreboard=body.include_scoreboard,
         include_boxscore=body.include_boxscore,
+        enable_analysis=body.enable_analysis,
         analysis_interval=body.analysis_interval,
         strategy_ids=body.strategy_ids,
         strategy_params_map=body.strategy_params_map,

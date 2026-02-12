@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { marked } from 'marked'
-import { useConnectionStore, useGameStore } from '@/stores'
+import { useAuthStore, useConnectionStore, useGameStore, useTaskStore, useToastStore } from '@/stores'
+import { taskService } from '@/services/taskService'
 import type { AnalysisChunkEventData } from '@/types/sse'
 
 // 配置 marked：同步模式，性能更好
@@ -20,12 +21,19 @@ interface AnalysisRoundGroup {
   chunks: AnalysisChunkEventData[]
 }
 
+const authStore = useAuthStore()
 const gameStore = useGameStore()
 const connectionStore = useConnectionStore()
+const taskStore = useTaskStore()
+const toastStore = useToastStore()
 
 const autoScroll = ref(true)
 const panelRef = ref<HTMLElement | null>(null)
 const copyStatus = ref<'idle' | 'success' | 'error'>('idle')
+const enableAnalysis = ref(true)
+const analysisTogglePending = ref(false)
+
+const currentTaskId = computed(() => taskStore.currentTaskId)
 
 const analysisChunks = computed(() => gameStore.analysisChunks)
 
@@ -152,6 +160,40 @@ function handleClear() {
   gameStore.clearAnalysis()
 }
 
+watch(currentTaskId, () => {
+  void loadAnalysisConfig()
+}, { immediate: true })
+
+async function loadAnalysisConfig() {
+  if (!currentTaskId.value || !authStore.token) return
+  try {
+    const response = await taskService.getTaskConfig(currentTaskId.value, authStore.token)
+    const config = (response.config ?? {}) as Record<string, unknown>
+    enableAnalysis.value = config.enable_analysis !== false
+  } catch {
+    // ignore — will default to true
+  }
+}
+
+async function toggleAnalysis() {
+  if (!currentTaskId.value || !authStore.token) return
+  analysisTogglePending.value = true
+  const newValue = !enableAnalysis.value
+  try {
+    await taskService.updateTaskConfig(
+      currentTaskId.value,
+      { patch: { enable_analysis: newValue } },
+      authStore.token,
+    )
+    enableAnalysis.value = newValue
+    toastStore.showInfo(newValue ? 'AI 分析已开启' : 'AI 分析已关闭')
+  } catch (err) {
+    toastStore.showError(`切换失败: ${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    analysisTogglePending.value = false
+  }
+}
+
 watch(
   () => analysisChunks.value.length,
   async () => {
@@ -172,6 +214,20 @@ watch(
           <span class="badge badge-sm badge-outline">{{ analysisChunks.length }}</span>
         </div>
         <div class="flex items-center gap-2">
+          <label
+            v-if="currentTaskId"
+            class="label cursor-pointer gap-1 py-0"
+            :title="enableAnalysis ? '点击关闭 AI 分析' : '点击开启 AI 分析'"
+          >
+            <span class="label-text text-xs">AI</span>
+            <input
+              type="checkbox"
+              class="toggle toggle-xs toggle-primary"
+              :checked="enableAnalysis"
+              :disabled="analysisTogglePending"
+              @change="toggleAnalysis"
+            />
+          </label>
           <button
             class="btn btn-xs btn-outline"
             :disabled="analysisChunks.length === 0"

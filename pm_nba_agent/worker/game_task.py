@@ -154,6 +154,7 @@ class GameTask:
             poll_interval=self.config.poll_interval,
             include_scoreboard=self.config.include_scoreboard,
             include_boxscore=self.config.include_boxscore,
+            enable_analysis=self.config.enable_analysis,
             analysis_interval=self.config.analysis_interval,
             strategy_ids=self.config.strategy_ids,
             strategy_params_map=self.config.strategy_params_map,
@@ -167,6 +168,7 @@ class GameTask:
             self.fetcher,
             self.analyzer,
             position_provider=self._get_strategy_position_context,
+            analysis_enabled_fn=lambda: self.config.enable_analysis,
         )
 
         # 消费事件流并发布到 Redis

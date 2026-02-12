@@ -274,10 +274,12 @@ class GameStreamService:
         fetcher: DataFetcher,
         analyzer: Optional[GameAnalyzer] = None,
         position_provider: Optional[PositionProvider] = None,
+        analysis_enabled_fn: Optional[Callable[[], bool]] = None,
     ):
         self._fetcher = fetcher
         self._analyzer = analyzer
         self._position_provider = position_provider
+        self._analysis_enabled_fn = analysis_enabled_fn
 
     async def create_stream(
         self,
@@ -485,7 +487,12 @@ class GameStreamService:
                             break
 
                         # 触发 AI 分析
-                        if request.enable_analysis and self._analyzer is not None:
+                        analysis_enabled = (
+                            self._analysis_enabled_fn()
+                            if self._analysis_enabled_fn is not None
+                            else request.enable_analysis
+                        )
+                        if analysis_enabled and self._analyzer is not None:
                             # 使用请求参数中的分析间隔
                             should_run = self._analyzer.is_enabled() and context.should_analyze(
                                 normal_interval=request.analysis_interval,

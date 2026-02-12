@@ -64,6 +64,7 @@ class TaskConfig:
         },
         "outcome_rules": {},
     })
+    enable_analysis: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
@@ -97,6 +98,7 @@ class TaskConfig:
             proxy_address=data.get("proxy_address"),
             auto_buy=_normalize_auto_buy(data.get("auto_buy")),
             auto_sell=_normalize_auto_sell(data.get("auto_sell")),
+            enable_analysis=bool(data.get("enable_analysis", True)),
         )
 
     @classmethod
