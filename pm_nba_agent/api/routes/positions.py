@@ -1,6 +1,7 @@
 """Polymarket 持仓查询路由"""
 
 from fastapi import APIRouter, HTTPException, Request
+from loguru import logger
 
 from ..models.requests import (
     PolymarketMarketPositionsRequest,
@@ -108,8 +109,10 @@ async def get_market_positions(
             proxy_address=body.proxy_address,
         )
     except ValueError as exc:
+        logger.warning("获取持仓参数错误 (condition={}): {}", body.condition_id, exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        logger.error("获取持仓失败 (condition={}): {}", body.condition_id, exc)
         raise HTTPException(status_code=500, detail=f"获取持仓失败: {exc}") from exc
 
     if positions is None:

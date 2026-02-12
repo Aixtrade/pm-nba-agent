@@ -5,6 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Optional, Any
 
+from loguru import logger
+
 from ...parsers.polymarket_parser import parse_polymarket_url, PolymarketEventInfo
 from ...nba.game_finder import find_game_by_teams_and_date
 from ...nba.live_stats import get_live_game_data, get_game_summary
@@ -42,6 +44,7 @@ class DataFetcher:
                 )
             return FetchResult(success=True, data=result)
         except Exception as e:
+            logger.warning("Polymarket URL 解析失败: {}", e)
             return FetchResult(success=False, error=str(e))
 
     async def find_game(
@@ -68,6 +71,7 @@ class DataFetcher:
                 )
             return FetchResult(success=True, data=game_id)
         except Exception as e:
+            logger.warning("查找比赛失败 ({} vs {} {}): {}", team1_abbr, team2_abbr, game_date, e)
             return FetchResult(success=False, error=str(e))
 
     async def get_boxscore(self, game_id: str) -> FetchResult:
@@ -86,6 +90,7 @@ class DataFetcher:
                 )
             return FetchResult(success=True, data=game_data)
         except Exception as e:
+            logger.warning("获取 Boxscore 失败 (game={}): {}", game_id, e)
             return FetchResult(success=False, error=str(e))
 
     async def get_scoreboard(self, game_id: str) -> FetchResult:
@@ -104,6 +109,7 @@ class DataFetcher:
                 )
             return FetchResult(success=True, data=summary)
         except Exception as e:
+            logger.warning("获取 Scoreboard 失败 (game={}): {}", game_id, e)
             return FetchResult(success=False, error=str(e))
 
     async def get_playbyplay(self, game_id: str, limit: int = 20) -> FetchResult:
@@ -123,6 +129,7 @@ class DataFetcher:
                 )
             return FetchResult(success=True, data=actions)
         except Exception as e:
+            logger.warning("获取 PlayByPlay 失败 (game={}): {}", game_id, e)
             return FetchResult(success=False, error=str(e))
 
     async def get_playbyplay_since(
@@ -146,6 +153,7 @@ class DataFetcher:
                 )
             return FetchResult(success=True, data=actions)
         except Exception as e:
+            logger.warning("获取增量 PlayByPlay 失败 (game={}, since={}): {}", game_id, since_action_number, e)
             return FetchResult(success=False, error=str(e))
 
     def shutdown(self):

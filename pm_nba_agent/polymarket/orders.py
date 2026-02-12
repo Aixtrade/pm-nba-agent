@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional, cast
 
+from loguru import logger
 from py_clob_client.clob_types import OrderArgs, PostOrdersArgs
 from py_clob_client.order_builder.constants import BUY, SELL
 
@@ -109,9 +110,18 @@ async def create_polymarket_order(
         order_args = OrderArgs(**order_kwargs)
         signed_order = client.create_order(order_args)
         order_type_value = "GTC" if normalized_order_type == "GTC" else "GTD"
-        return client.post_order(signed_order, cast(Any, order_type_value))
+        result = client.post_order(signed_order, cast(Any, order_type_value))
+        logger.info(
+            "下单成功: token_id={}, side={}, price={}, size={}, order_type={}",
+            token_id, normalized_side, price, size, normalized_order_type,
+        )
+        return result
     except Exception as exc:
         error_details = _format_clob_error(exc)
+        logger.error(
+            "下单失败: token_id={}, side={}, price={}, size={}, order_type={}, error={}, details={}",
+            token_id, normalized_side, price, size, normalized_order_type, exc, error_details,
+        )
         raise ValueError(
             "Polymarket 下单失败: "
             f"token_id={token_id}, side={normalized_side}, price={price}, size={size}, "
@@ -173,6 +183,10 @@ async def create_polymarket_orders_batch(
             )
         except Exception as exc:
             error_details = _format_clob_error(exc)
+            logger.error(
+                "订单签名失败: orders[{}] token_id={}, side={}, price={}, size={}, error={}, details={}",
+                index, token_id, side, price, size, exc, error_details,
+            )
             raise ValueError(
                 "Polymarket 订单签名失败: "
                 f"orders[{index}] token_id={token_id}, side={side}, price={price}, size={size}, "
@@ -181,9 +195,15 @@ async def create_polymarket_orders_batch(
             ) from exc
 
     try:
-        return client.post_orders(post_orders)
+        result = client.post_orders(post_orders)
+        logger.info("批量下单成功: count={}", len(post_orders))
+        return result
     except Exception as exc:
         error_details = _format_clob_error(exc)
+        logger.error(
+            "批量下单失败: count={}, error={}, details={}",
+            len(post_orders), exc, error_details,
+        )
         raise ValueError(
             "Polymarket 批量下单失败: "
             f"count={len(post_orders)}, error={exc}, details={error_details}"

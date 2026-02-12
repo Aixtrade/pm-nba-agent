@@ -1,6 +1,7 @@
 """Polymarket 下单路由"""
 
 from fastapi import APIRouter, HTTPException, Request
+from loguru import logger
 
 from ..models.requests import (
     PolymarketOrderRequest,
@@ -36,8 +37,10 @@ async def create_order(
             proxy_address=body.proxy_address,
         )
     except ValueError as exc:
+        logger.warning("创建订单参数错误: {}", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        logger.error("创建订单失败: {}", exc)
         raise HTTPException(status_code=500, detail=f"创建订单失败: {exc}") from exc
 
     return PolymarketOrderResponse(
@@ -63,8 +66,10 @@ async def create_orders_batch(
             proxy_address=batch_proxy_address,
         )
     except ValueError as exc:
+        logger.warning("创建批量订单参数错误: {}", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        logger.error("创建批量订单失败: {}", exc)
         raise HTTPException(status_code=500, detail=f"创建批量订单失败: {exc}") from exc
 
     return PolymarketBatchOrderResponse(results=results)

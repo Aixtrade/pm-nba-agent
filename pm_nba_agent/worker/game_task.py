@@ -319,6 +319,10 @@ class GameTask:
                         proxy_address=proxy_address,
                     )
                     orders.append({**order_info, "status": "SUBMITTED", "result": result})
+                    logger.info(
+                        "自动买入成功 task={} strategy={} outcome={} price={} size={}",
+                        self.task_id, strategy_id, outcome, best_ask, size,
+                    )
                     self._record_auto_buy_stat(outcome, amount)
                 except Exception as exc:
                     logger.error("自动买入失败 task={} strategy={} outcome={}: {}", self.task_id, strategy_id, outcome, exc)
@@ -726,6 +730,10 @@ class GameTask:
                         "side": "SELL",
                         "status": "SUBMITTED",
                     })
+                    logger.info(
+                        "自动卖出成功 task={} outcome={} price={} size={} profit_rate={:.2%}",
+                        self.task_id, outcome, order["price"], order["size"], order["profit_rate"],
+                    )
                     self._record_auto_sell_stat(outcome, float(order["size"]) * float(order["price"]))
                     success_count += 1
                 except Exception as exc:
