@@ -24,8 +24,10 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/0
       - USERS_CONFIG_PATH=/app/config/users.yaml
+      - LOG_DIR=/app/logs
     volumes:
       - ./config:/app/config:ro
+      - ./logs/backend:/app/logs
     depends_on:
       redis:
         condition: service_healthy
@@ -50,8 +52,10 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/0
       - USERS_CONFIG_PATH=/app/config/users.yaml
+      - LOG_DIR=/app/logs
     volumes:
       - ./config:/app/config:ro
+      - ./logs/worker:/app/logs
     depends_on:
       redis:
         condition: service_healthy

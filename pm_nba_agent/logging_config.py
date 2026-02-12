@@ -5,9 +5,14 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from pathlib import Path
 from typing import Optional
 
 from loguru import logger
+
+_DEFAULT_LOG_DIR = "logs"
+_FILE_FORMAT = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level} | {message}"
+_STDOUT_FORMAT = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level}</level> | {message}"
 
 
 class _InterceptHandler(logging.Handler):
@@ -31,6 +36,8 @@ def configure_logging(level: Optional[str] = None) -> None:
     log_level = level or os.getenv("LOG_LEVEL", "INFO")
 
     logger.remove()
+
+    # stdout handler
     logger.add(
         sys.stdout,
         level=log_level,
@@ -38,8 +45,30 @@ def configure_logging(level: Optional[str] = None) -> None:
         backtrace=False,
         diagnose=False,
         colorize=True,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level}</level> | {message}",
+        format=_STDOUT_FORMAT,
     )
+
+    # 文件持久化
+    log_dir = Path(os.getenv("LOG_DIR", _DEFAULT_LOG_DIR))
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    _common_file_opts = dict(
+        enqueue=True,
+        backtrace=False,
+        diagnose=False,
+        colorize=False,
+        format=_FILE_FORMAT,
+        rotation="00:00",
+        retention="30 days",
+        compression="gz",
+        encoding="utf-8",
+    )
+
+    # 全量日志
+    logger.add(log_dir / "{time:YYYY-MM-DD}.log", level=log_level, **_common_file_opts)
+
+    # 错误日志（ERROR + CRITICAL）
+    logger.add(log_dir / "{time:YYYY-MM-DD}_error.log", level="ERROR", **_common_file_opts)
 
     logging.basicConfig(handlers=[_InterceptHandler()], level=0, force=True)
 

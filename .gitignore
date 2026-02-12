@@ -13,3 +13,6 @@ wheels/
 
 .env
 config/users.yaml
+
+# Logs
+logs/
