@@ -4,6 +4,7 @@ import BoxScore from '@/components/monitor/BoxScore.vue'
 import PlayerStatsTable from '@/components/monitor/PlayerStatsTable.vue'
 import StrategySidebar from '@/components/monitor/StrategySidebar.vue'
 import PolymarketBookPanel from '@/components/monitor/PolymarketBookPanel.vue'
+import CurrentPositionPanel from '@/components/monitor/CurrentPositionPanel.vue'
 import AutoBuyPanel from '@/components/monitor/AutoBuyPanel.vue'
 import AutoSellPanel from '@/components/monitor/AutoSellPanel.vue'
 
@@ -24,9 +25,9 @@ const gameStore = useGameStore()
       </div>
 
       <!-- 中间主内容区 -->
-      <div class="space-y-4 min-w-0">
-        <!-- 自动买入面板 -->
-        <AutoBuyPanel />
+      <div class="space-y-4 min-w-0 xl:order-2">
+        <!-- 当前持仓 -->
+        <CurrentPositionPanel />
 
         <!-- 自动卖出面板 -->
         <AutoSellPanel />
@@ -48,8 +49,11 @@ const gameStore = useGameStore()
       </div>
 
       <!-- Polymarket 右侧边栏 -->
-      <div class="lg:col-span-2 xl:col-span-1 lg:sticky lg:top-(--sidebar-top) lg:max-h-(--sidebar-height) lg:overflow-y-auto pr-1">
-        <PolymarketBookPanel :show-position-cost="true" />
+      <div class="lg:col-span-2 xl:col-span-1 xl:order-3 space-y-4 lg:sticky lg:top-(--sidebar-top) lg:max-h-(--sidebar-height) lg:overflow-y-auto pr-1">
+        <!-- 自动买入面板 -->
+        <AutoBuyPanel />
+
+        <PolymarketBookPanel />
       </div>
     </div>
 

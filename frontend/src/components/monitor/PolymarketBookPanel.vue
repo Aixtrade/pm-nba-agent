@@ -5,15 +5,6 @@ import { submitOrder, getPolymarketConfig, requestPositionRefresh } from '@/comp
 import ConditionAutoBuyPanel from '@/components/monitor/ConditionAutoBuyPanel.vue'
 import PeriodicBuyPanel from '@/components/monitor/PeriodicBuyPanel.vue'
 
-const props = withDefaults(
-  defineProps<{
-    showPositionCost?: boolean
-  }>(),
-  {
-    showPositionCost: true,
-  }
-)
-
 const authStore = useAuthStore()
 const gameStore = useGameStore()
 const toastStore = useToastStore()
@@ -51,7 +42,6 @@ const submitting = reactive<Record<string, boolean>>({})
 
 // 使用 store 中的持仓数据
 const positionSides = computed(() => gameStore.positionSides)
-const positionsLoading = computed(() => gameStore.positionsLoading)
 
 const positionSizeByOutcome = computed(() => {
   const map: Record<string, number> = {}
@@ -251,46 +241,6 @@ function getQuickSellDisabled(outcome: string) {
 
       <div v-if="!authStore.isAuthenticated" class="mt-3 text-right text-xs text-amber-600/80">
         下单前请先登录
-      </div>
-
-      <div class="mt-3 rounded-lg border border-base-200/70 px-3 py-2 ring-1 ring-base-content/20">
-        <div class="flex items-center justify-between gap-3">
-          <div class="text-sm font-semibold">当前持仓</div>
-          <div class="flex items-center gap-2 text-xs text-base-content/60">
-            <span>{{ positionsLoading ? '刷新中...' : '双边份额' }}</span>
-            <button
-              class="btn btn-ghost btn-xs"
-              :disabled="positionsLoading"
-              @click="requestPositionRefresh()"
-              title="刷新持仓"
-            >
-              ↻
-            </button>
-          </div>
-        </div>
-      <div class="mt-2 grid grid-cols-2 gap-2 text-xs">
-        <div
-          v-for="side in positionSides"
-          :key="side.outcome"
-          class="rounded-md bg-base-100/60 px-2 py-2"
-        >
-          <div class="flex items-baseline justify-between">
-            <span class="text-sm font-semibold text-base-content">{{ side.outcome }}</span>
-            <span class="text-sm font-semibold text-base-content">{{ formatSize(side.size) }}</span>
-          </div>
-          <div v-if="props.showPositionCost" class="mt-0.5 flex items-center justify-between text-[10px] text-base-content/50">
-            <span>成本</span>
-            <span class="text-base-content/70">{{ formatSize(side.initial_value ?? null) }}</span>
-          </div>
-          <div class="mt-0.5 flex items-center justify-between text-[10px] text-base-content/50">
-            <span>均价 / 现价</span>
-            <span class="text-base-content/70">{{ side.avg_price != null ? formatPrice(side.avg_price) : '-' }} / {{ side.cur_price != null ? formatPrice(side.cur_price) : '-' }}</span>
-          </div>
-        </div>
-        <div v-if="positionSides.length === 0" class="col-span-2 text-center text-base-content/50">
-          暂无持仓数据
-        </div>
-      </div>
       </div>
 
       <div v-if="rows.length === 0" class="py-6 text-center text-base-content/50">
