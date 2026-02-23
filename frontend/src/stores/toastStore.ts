@@ -10,6 +10,7 @@ type ToastItem = {
 }
 
 const DEFAULT_DURATION = 3200
+const MAX_TOASTS = 3
 let toastSeed = 0
 
 export const useToastStore = defineStore('toast', () => {
@@ -30,6 +31,13 @@ export const useToastStore = defineStore('toast', () => {
 
   function showToast(message: string, type: ToastType = 'info', duration = DEFAULT_DURATION) {
     if (!message) return
+
+    while (toasts.value.length >= MAX_TOASTS) {
+      const oldest = toasts.value[0]
+      if (!oldest) break
+      removeToast(oldest.id)
+    }
+
     const id = toastSeed++
     toasts.value.push({ id, message, type })
 
