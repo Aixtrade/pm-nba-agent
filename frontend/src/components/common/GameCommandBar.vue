@@ -236,11 +236,11 @@ watch(
       <!-- URL 历史下拉 -->
       <ul
         v-if="showHistory && urlHistory.length > 0"
-        class="absolute top-full left-0 right-0 mt-1 z-50 menu bg-base-100 rounded-box shadow-lg border border-base-200 max-h-48 overflow-y-auto p-1"
+        class="absolute top-full left-0 right-0 mt-1 z-50 bg-base-100 rounded-box shadow-lg border border-base-200 max-h-48 overflow-y-auto p-1 flex flex-col flex-nowrap"
       >
         <li v-for="historyUrl in urlHistory" :key="historyUrl">
           <a
-            class="text-xs truncate"
+            class="block w-full px-2 py-1.5 rounded text-xs truncate hover:bg-base-200"
             @mousedown.prevent="selectHistory(historyUrl)"
           >
             {{ historyUrl }}
