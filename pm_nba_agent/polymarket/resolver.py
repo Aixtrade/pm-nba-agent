@@ -19,15 +19,23 @@ class MarketResolver:
     用于从事件 URL 或 ID 解析市场信息，并通过 REST API 获取 Token 详情。
     """
 
-    EVENT_URL_PATTERN = r"https://polymarket\.com/event/([a-z0-9\-]+)"
+    # 支持多种 URL 路径格式：
+    # - /event/{slug}
+    # - /sports/nba/{slug}
+    # - /{lang}/sports/nba/{slug}
+    # - /{lang}/event/{slug}
+    EVENT_URL_PATTERN = r"https://polymarket\.com/(?:[a-z]{2}/)?(?:event|sports/[a-z0-9]+)/([a-z0-9\-]+)"
 
     @staticmethod
     def parse_event_url(url: str) -> Optional[str]:
         """从 URL 解析事件 ID
 
         支持的格式：
-        - URL: https://polymarket.com/event/btc-updown-15m-1766464200
-        - 直接 ID: btc-updown-15m-1766464200
+        - URL: https://polymarket.com/event/nba-bos-lal-2026-02-22
+        - URL: https://polymarket.com/sports/nba/nba-bos-lal-2026-02-22
+        - URL: https://polymarket.com/zh/sports/nba/nba-bos-lal-2026-02-22
+        - URL: https://polymarket.com/zh/event/nba-bos-lal-2026-02-22
+        - 直接 ID: nba-bos-lal-2026-02-22
         """
         match = re.search(MarketResolver.EVENT_URL_PATTERN, url)
         if match:

@@ -19,7 +19,10 @@ def parse_polymarket_url(url: str) -> Optional[PolymarketEventInfo]:
     从 Polymarket URL 提取比赛信息
 
     Args:
-        url: Polymarket 事件 URL，格式如 https://polymarket.com/event/nba-orl-cle-2026-01-26
+        url: Polymarket 事件 URL，支持多种路径格式：
+            - https://polymarket.com/event/nba-orl-cle-2026-01-26
+            - https://polymarket.com/sports/nba/nba-orl-cle-2026-01-26
+            - https://polymarket.com/zh/sports/nba/nba-orl-cle-2026-01-26
 
     Returns:
         PolymarketEventInfo 对象，如果解析失败返回 None
@@ -33,8 +36,8 @@ def parse_polymarket_url(url: str) -> Optional[PolymarketEventInfo]:
         >>> info.game_date
         '2026-01-26'
     """
-    # 正则提取: nba-{team1}-{team2}-{date}
-    pattern = r'/event/nba-([a-z]+)-([a-z]+)-(\d{4}-\d{2}-\d{2})'
+    # 匹配路径中的 nba-{team1}-{team2}-{date} slug，不依赖固定前缀
+    pattern = r'/nba-([a-z]+)-([a-z]+)-(\d{4}-\d{2}-\d{2})'
     match = re.search(pattern, url.lower())
 
     if not match:
