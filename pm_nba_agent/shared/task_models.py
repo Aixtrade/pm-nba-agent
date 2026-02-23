@@ -64,6 +64,17 @@ class TaskConfig:
         },
         "outcome_rules": {},
     })
+    auto_trade: dict[str, Any] = field(default_factory=lambda: {
+        "version": 1,
+        "enabled": False,
+        "defaults": {
+            "order_type": "GTC",
+            "min_order_amount": 1.0,
+            "round_size": False,
+            "execution_mode": "SIMULATION",
+        },
+        "rules": [],
+    })
     enable_analysis: bool = True
 
     def to_dict(self) -> dict[str, Any]:
@@ -98,6 +109,11 @@ class TaskConfig:
             proxy_address=data.get("proxy_address"),
             auto_buy=_normalize_auto_buy(data.get("auto_buy")),
             auto_sell=_normalize_auto_sell(data.get("auto_sell")),
+            auto_trade=_normalize_auto_trade(
+                data.get("auto_trade"),
+                legacy_auto_buy=data.get("auto_buy"),
+                legacy_auto_sell=data.get("auto_sell"),
+            ),
             enable_analysis=bool(data.get("enable_analysis", True)),
         )
 
@@ -210,7 +226,7 @@ def _normalize_auto_buy(value: Any) -> dict[str, Any]:
     if isinstance(default_input, dict):
         default_cfg = {
             **base["default"],
-            "amount": float(default_input.get("amount", base["default"]["amount"])),
+            "amount": _to_float(default_input.get("amount"), base["default"]["amount"]),
             "round_size": bool(default_input.get("round_size", base["default"]["round_size"])),
             "order_type": str(default_input.get("order_type", base["default"]["order_type"])),
             "execution_mode": str(default_input.get("execution_mode", base["default"]["execution_mode"])),
@@ -236,7 +252,7 @@ def _normalize_auto_buy(value: Any) -> dict[str, Any]:
             }
 
             if raw_rule.get("amount") is not None:
-                rule["amount"] = float(raw_rule.get("amount"))
+                rule["amount"] = _to_float(raw_rule.get("amount"), 0.0)
             if raw_rule.get("round_size") is not None:
                 rule["round_size"] = bool(raw_rule.get("round_size"))
             if raw_rule.get("order_type") is not None:
@@ -275,12 +291,12 @@ def _normalize_auto_sell(value: Any) -> dict[str, Any]:
     if isinstance(default_input, dict):
         default_cfg = {
             **base["default"],
-            "min_profit_rate": float(default_input.get("min_profit_rate", base["default"]["min_profit_rate"])),
-            "sell_ratio": float(default_input.get("sell_ratio", base["default"]["sell_ratio"])),
-            "cooldown_time": float(default_input.get("cooldown_time", base["default"]["cooldown_time"])),
-            "refresh_interval": float(default_input.get("refresh_interval", base["default"]["refresh_interval"])),
+            "min_profit_rate": _to_float(default_input.get("min_profit_rate"), base["default"]["min_profit_rate"]),
+            "sell_ratio": _to_float(default_input.get("sell_ratio"), base["default"]["sell_ratio"]),
+            "cooldown_time": _to_float(default_input.get("cooldown_time"), base["default"]["cooldown_time"]),
+            "refresh_interval": _to_float(default_input.get("refresh_interval"), base["default"]["refresh_interval"]),
             "order_type": str(default_input.get("order_type", base["default"]["order_type"])),
-            "max_stale_seconds": float(default_input.get("max_stale_seconds", base["default"]["max_stale_seconds"])),
+            "max_stale_seconds": _to_float(default_input.get("max_stale_seconds"), base["default"]["max_stale_seconds"]),
         }
     else:
         default_cfg = dict(base["default"])
@@ -298,11 +314,11 @@ def _normalize_auto_sell(value: Any) -> dict[str, Any]:
                 "enabled": bool(raw_rule.get("enabled", False)),
             }
             if raw_rule.get("min_profit_rate") is not None:
-                rule["min_profit_rate"] = float(raw_rule.get("min_profit_rate"))
+                rule["min_profit_rate"] = _to_float(raw_rule.get("min_profit_rate"), 0.0)
             if raw_rule.get("sell_ratio") is not None:
-                rule["sell_ratio"] = float(raw_rule.get("sell_ratio"))
+                rule["sell_ratio"] = _to_float(raw_rule.get("sell_ratio"), 0.0)
             if raw_rule.get("cooldown_time") is not None:
-                rule["cooldown_time"] = float(raw_rule.get("cooldown_time"))
+                rule["cooldown_time"] = _to_float(raw_rule.get("cooldown_time"), 0.0)
             if raw_rule.get("order_type") is not None:
                 rule["order_type"] = str(raw_rule.get("order_type"))
 
@@ -313,3 +329,204 @@ def _normalize_auto_sell(value: Any) -> dict[str, Any]:
         "default": default_cfg,
         "outcome_rules": outcome_rules,
     }
+
+
+def _default_auto_trade() -> dict[str, Any]:
+    return {
+        "version": 1,
+        "enabled": False,
+        "defaults": {
+            "order_type": "GTC",
+            "min_order_amount": 1.0,
+            "round_size": False,
+            "execution_mode": "SIMULATION",
+        },
+        "rules": [],
+    }
+
+
+def _normalize_auto_trade(
+    value: Any,
+    legacy_auto_buy: dict[str, Any] | None = None,
+    legacy_auto_sell: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    base = _default_auto_trade()
+
+    if isinstance(value, dict):
+        defaults_in: dict[str, Any] = {}
+        raw_defaults = value.get("defaults")
+        if isinstance(raw_defaults, dict):
+            defaults_in = raw_defaults
+        defaults = {
+            "order_type": str(defaults_in.get("order_type", base["defaults"]["order_type"])),
+            "min_order_amount": _to_float(defaults_in.get("min_order_amount"), base["defaults"]["min_order_amount"]),
+            "round_size": bool(defaults_in.get("round_size", base["defaults"]["round_size"])),
+            "execution_mode": str(defaults_in.get("execution_mode", base["defaults"]["execution_mode"])),
+        }
+
+        rules: list[dict[str, Any]] = []
+        raw_rules = value.get("rules")
+        if isinstance(raw_rules, list):
+            for index, raw_rule in enumerate(raw_rules):
+                normalized_rule = _normalize_auto_trade_rule(raw_rule, index)
+                if normalized_rule:
+                    rules.append(normalized_rule)
+
+        return {
+            "version": max(1, _to_int(value.get("version"), 1)),
+            "enabled": bool(value.get("enabled", False)),
+            "defaults": defaults,
+            "rules": rules,
+        }
+
+    migrated_rules = _migrate_legacy_auto_buy_rules(legacy_auto_buy)
+    migrated_rules.extend(_migrate_legacy_auto_sell_rules(legacy_auto_sell))
+    return {
+        "version": 1,
+        "enabled": bool(migrated_rules),
+        "defaults": base["defaults"],
+        "rules": migrated_rules,
+    }
+
+
+def _normalize_auto_trade_rule(value: Any, index: int) -> Optional[dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+
+    rule_type = str(value.get("type", "")).strip()
+    if not rule_type:
+        return None
+
+    rule_id = str(value.get("id", "")).strip() or f"{rule_type}_{index + 1}"
+    scope_input: dict[str, Any] = {}
+    raw_scope = value.get("scope")
+    if isinstance(raw_scope, dict):
+        scope_input = raw_scope
+    scope = {
+        "strategy_id": str(scope_input.get("strategy_id", "")).strip() or None,
+        "outcome": str(scope_input.get("outcome", "__BOTH__")).strip() or "__BOTH__",
+    }
+
+    config_input: dict[str, Any] = {}
+    raw_config = value.get("config")
+    if isinstance(raw_config, dict):
+        config_input = raw_config
+    risk_input: dict[str, Any] = {}
+    raw_risk = value.get("risk")
+    if isinstance(raw_risk, dict):
+        risk_input = raw_risk
+
+    return {
+        "id": rule_id,
+        "type": rule_type,
+        "enabled": bool(value.get("enabled", True)),
+        "priority": _to_int(value.get("priority"), 1000),
+        "scope": scope,
+        "cooldown_seconds": max(0.0, _to_float(value.get("cooldown_seconds"), 0.0)),
+        "config": _normalize_auto_trade_rule_config(rule_type, config_input),
+        "risk": {
+            "max_total_budget": max(0.0, _to_float(risk_input.get("max_total_budget"), 0.0)),
+            "max_order_count": max(0, _to_int(risk_input.get("max_order_count"), 0)),
+            "max_slippage": max(0.0, _to_float(risk_input.get("max_slippage"), 0.0)),
+        },
+    }
+
+
+def _normalize_auto_trade_rule_config(rule_type: str, config: dict[str, Any]) -> dict[str, Any]:
+    if rule_type == "signal_buy":
+        signal_types = config.get("signal_types")
+        if not isinstance(signal_types, list) or not signal_types:
+            signal_types = ["BUY"]
+        return {
+            "signal_types": [str(item).upper() for item in signal_types],
+            "amount": _to_float(config.get("amount"), 10.0),
+            "round_size": bool(config.get("round_size", False)),
+            "order_type": str(config.get("order_type", "GTC")),
+        }
+
+    if rule_type == "condition_buy":
+        return {
+            "trigger_price_lte": _to_float(config.get("trigger_price_lte"), 0.45),
+            "budget_usdc": _to_float(config.get("budget_usdc"), 10.0),
+            "order_type": str(config.get("order_type", "GTC")),
+        }
+
+    if rule_type == "periodic_buy":
+        return {
+            "interval_seconds": max(5, _to_int(config.get("interval_seconds"), 120)),
+            "budget_usdc": _to_float(config.get("budget_usdc"), 10.0),
+            "max_total_budget": max(0.0, _to_float(config.get("max_total_budget"), 0.0)),
+            "order_type": str(config.get("order_type", "GTC")),
+        }
+
+    return dict(config)
+
+
+def _migrate_legacy_auto_buy_rules(legacy_auto_buy: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(legacy_auto_buy, dict):
+        return []
+
+    rules: list[dict[str, Any]] = []
+    strategy_rules = legacy_auto_buy.get("strategy_rules")
+    if not isinstance(strategy_rules, dict):
+        return rules
+
+    default_input: dict[str, Any] = {}
+    raw_default = legacy_auto_buy.get("default")
+    if isinstance(raw_default, dict):
+        default_input = raw_default
+
+    for strategy_id, raw_rule in strategy_rules.items():
+        if not isinstance(strategy_id, str) or not strategy_id:
+            continue
+        if not isinstance(raw_rule, dict):
+            continue
+
+        signal_types = raw_rule.get("signal_types")
+        if not isinstance(signal_types, list) or not signal_types:
+            signal_types = ["BUY"]
+
+        rules.append({
+            "id": f"legacy_signal_buy_{strategy_id}",
+            "type": "signal_buy",
+            "enabled": bool(raw_rule.get("enabled", True)),
+            "priority": 100,
+            "scope": {
+                "strategy_id": strategy_id,
+                "outcome": str(raw_rule.get("side", "__BOTH__")),
+            },
+            "cooldown_seconds": 0.0,
+            "config": {
+                "signal_types": [str(item).upper() for item in signal_types],
+                "amount": _to_float(raw_rule.get("amount"), _to_float(default_input.get("amount"), 10.0)),
+                "round_size": bool(raw_rule.get("round_size", default_input.get("round_size", False))),
+                "order_type": str(raw_rule.get("order_type", default_input.get("order_type", "GTC"))),
+            },
+            "risk": {
+                "max_total_budget": 0.0,
+                "max_order_count": 0,
+                "max_slippage": 0.0,
+            },
+        })
+
+    return rules
+
+
+def _migrate_legacy_auto_sell_rules(legacy_auto_sell: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(legacy_auto_sell, dict):
+        return []
+    return []
+
+
+def _to_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default

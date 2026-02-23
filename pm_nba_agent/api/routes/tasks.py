@@ -63,6 +63,7 @@ class CreateTaskRequest(BaseModel):
     proxy_address: str | None = Field(default=None)
     auto_buy: dict[str, Any] | None = Field(default=None)
     auto_sell: dict[str, Any] | None = Field(default=None)
+    auto_trade: dict[str, Any] | None = Field(default=None)
 
 
 class UpdateTaskConfigRequest(BaseModel):
@@ -108,6 +109,7 @@ SNAPSHOT_EVENT_NAMES = [
     "scoreboard",
     "polymarket_book",
     "auto_buy_state",
+    "auto_trade_state",
     "auto_sell_state",
     "position_state",
 ]
@@ -157,6 +159,7 @@ async def create_task(
         proxy_address=body.proxy_address,
         auto_buy=body.auto_buy or {},
         auto_sell=body.auto_sell or {},
+        auto_trade=body.auto_trade or {},
         user_id=user_id,
     )
 

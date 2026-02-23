@@ -89,6 +89,18 @@ export function useSSE() {
     onAutoBuyState: (data) => {
       gameStore.setAutoBuyState(data)
     },
+    onAutoTradeState: (data) => {
+      gameStore.setAutoTradeState(data)
+    },
+    onAutoTradeExecution: (data) => {
+      if (data?.source !== 'auto_trade_engine') return
+      const orderCount = Array.isArray(data.orders) ? data.orders.length : 0
+      if (data.success) {
+        toastStore.showSuccess(`自动交易下单成功 (${orderCount} 笔)`)
+      } else {
+        toastStore.showError(data.error || '自动交易下单失败')
+      }
+    },
     onAutoSellState: (data) => {
       gameStore.setAutoSellState(data)
     },

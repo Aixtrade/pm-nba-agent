@@ -9,6 +9,7 @@ import type {
   PolymarketBookEventData,
   StrategySignalEventData,
   AutoBuyStateEventData,
+  AutoTradeStateEventData,
   AutoSellStateEventData,
   PositionStateEventData,
 } from '@/types/sse'
@@ -119,6 +120,7 @@ export const useGameStore = defineStore('game', () => {
   const latestSignalByStrategy = ref<Record<string, StrategySignalEventData | null>>({})
   const MAX_STRATEGY_SIGNALS = 100
   const autoBuyState = ref<AutoBuyStateEventData | null>(null)
+  const autoTradeState = ref<AutoTradeStateEventData | null>(null)
   const autoSellState = ref<AutoSellStateEventData | null>(null)
 
   // 向后兼容的 computed
@@ -353,6 +355,10 @@ export const useGameStore = defineStore('game', () => {
     autoBuyState.value = data
   }
 
+  function setAutoTradeState(data: AutoTradeStateEventData) {
+    autoTradeState.value = data
+  }
+
   function setAutoSellState(data: AutoSellStateEventData) {
     autoSellState.value = data
   }
@@ -377,6 +383,7 @@ export const useGameStore = defineStore('game', () => {
     positionsLoading.value = false
     positionsUpdatedAt.value = null
     autoBuyState.value = null
+    autoTradeState.value = null
     autoSellState.value = null
   }
 
@@ -400,6 +407,7 @@ export const useGameStore = defineStore('game', () => {
     positionsLoading,
     positionsUpdatedAt,
     autoBuyState,
+    autoTradeState,
     autoSellState,
     // 计算属性
     gameId,
@@ -422,6 +430,7 @@ export const useGameStore = defineStore('game', () => {
     setPositionSides,
     setPositionsLoading,
     setAutoBuyState,
+    setAutoTradeState,
     setAutoSellState,
     setPositionState,
     reset,

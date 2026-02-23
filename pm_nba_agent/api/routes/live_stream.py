@@ -180,6 +180,7 @@ async def subscribe_task(
                 "scoreboard",
                 "polymarket_book",
                 "auto_buy_state",
+                "auto_trade_state",
                 "auto_sell_state",
                 "position_state",
             ]

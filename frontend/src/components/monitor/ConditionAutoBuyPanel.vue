@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import { useTaskStore, useToastStore } from '@/stores'
-import { submitOrder, requestPositionRefresh, canPlaceOrder } from '@/composables/usePolymarketOrder'
+import { computed, ref, watch } from 'vue'
+import { useAuthStore, useGameStore, useTaskStore, useToastStore } from '@/stores'
+import { taskService } from '@/services/taskService'
 
 const props = defineProps<{
   tokenId: string
@@ -9,11 +9,12 @@ const props = defineProps<{
   bestAsk: number | null
 }>()
 
-const AUTO_BUY_CONFIG_KEY = 'POLYMARKET_LOCAL_AUTO_BUY_CONFIG_V1'
 const DEFAULT_TRIGGER_PRICE = 0.45
 const DEFAULT_BUDGET = 10
 const DEFAULT_COOLDOWN = 60
 
+const authStore = useAuthStore()
+const gameStore = useGameStore()
 const taskStore = useTaskStore()
 const toastStore = useToastStore()
 
@@ -21,115 +22,188 @@ const enabled = ref(false)
 const triggerPrice = ref(DEFAULT_TRIGGER_PRICE.toFixed(3))
 const budget = ref(DEFAULT_BUDGET.toString())
 const cooldown = ref(DEFAULT_COOLDOWN.toString())
-const submitting = ref(false)
-const lastBuyAt = ref(0)
+const requestPending = ref(false)
+
+const autoTradeState = computed(() => gameStore.autoTradeState)
+const currentTaskId = computed(() => taskStore.currentTaskId)
+const ruleId = computed(() => `condition_buy_${normalizeRuleSuffix(props.outcome)}`)
+const runtimeState = computed(() => {
+  const runtime = autoTradeState.value?.runtime
+  if (!runtime) return null
+  return runtime[ruleId.value] ?? null
+})
+const backendBuyCount = computed(() => Number(runtimeState.value?.order_count ?? 0))
+const backendTotalSpent = computed(() => Number(runtimeState.value?.total_spent ?? 0))
 
 // --- localStorage persistence (full-map, backward compat) ---
 
-interface StoredRule {
+interface AutoTradeRule {
+  id?: string
+  type?: string
   enabled?: boolean
-  trigger?: string
-  budget?: string
-  cooldown?: string
+  priority?: number
+  scope?: Record<string, unknown>
+  cooldown_seconds?: number
+  config?: Record<string, unknown>
+  risk?: Record<string, unknown>
 }
 
-function loadConfig() {
-  try {
-    const raw = localStorage.getItem(AUTO_BUY_CONFIG_KEY)
-    if (!raw) return
-    const parsed = JSON.parse(raw) as { rules?: Record<string, StoredRule> }
-    const rule = parsed.rules?.[props.outcome]
-    if (!rule) return
-    enabled.value = !!rule.enabled
-    if (rule.trigger !== undefined) triggerPrice.value = rule.trigger
-    if (rule.budget !== undefined) budget.value = rule.budget
-    if (rule.cooldown !== undefined) cooldown.value = rule.cooldown
-  } catch {
-    // ignore
-  }
-}
+watch(currentTaskId, () => {
+  void loadRuleFromTaskConfig()
+}, { immediate: true })
 
-function saveConfig() {
-  try {
-    const raw = localStorage.getItem(AUTO_BUY_CONFIG_KEY)
-    const parsed = raw ? (JSON.parse(raw) as { rules?: Record<string, StoredRule> }) : {}
-    const rules = parsed.rules ?? {}
-    rules[props.outcome] = {
-      enabled: enabled.value,
-      trigger: triggerPrice.value,
-      budget: budget.value,
-      cooldown: cooldown.value,
-    }
-    localStorage.setItem(AUTO_BUY_CONFIG_KEY, JSON.stringify({ rules }))
-  } catch {
-    // ignore
-  }
-}
-
-loadConfig()
-
-// If triggerPrice was never set (fresh outcome), seed from bestAsk
-if (triggerPrice.value === DEFAULT_TRIGGER_PRICE.toFixed(3) && props.bestAsk !== null) {
-  triggerPrice.value = props.bestAsk.toFixed(3)
-}
-
-function onRuleChange() {
-  saveConfig()
-  void runAutoBuy()
-}
-
-function parsePositiveNumber(value: string): number | null {
-  const num = Number(value)
-  if (Number.isNaN(num) || num <= 0) return null
-  return num
-}
-
-// --- auto-buy sweep on bestAsk change ---
-
-watch(() => props.bestAsk, () => {
-  void runAutoBuy()
+watch(autoTradeState, () => {
+  syncFormFromState()
 })
 
-async function runAutoBuy() {
-  if (!enabled.value) return
-  if (submitting.value) return
+watch(() => props.outcome, () => {
+  void loadRuleFromTaskConfig()
+})
 
-  const check = canPlaceOrder()
-  if (!check.ok) return
+function normalizeRuleSuffix(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+  return normalized || 'unknown'
+}
 
-  const ask = props.bestAsk
-  if (ask === null || Number.isNaN(ask) || ask <= 0 || ask >= 1) return
+function getNumeric(input: string, fallback: number): number {
+  const value = Number(input)
+  if (!Number.isFinite(value)) return fallback
+  return value
+}
 
-  const trigger = parsePositiveNumber(triggerPrice.value)
-  const budgetVal = parsePositiveNumber(budget.value)
-  const cooldownVal = parsePositiveNumber(cooldown.value) ?? DEFAULT_COOLDOWN
-  if (trigger === null || budgetVal === null) return
-  if (trigger >= 1) return
-  if (ask > trigger) return
+function parseRules(config: Record<string, unknown>): AutoTradeRule[] {
+  const autoTrade = config.auto_trade
+  if (!autoTrade || typeof autoTrade !== 'object') return []
+  const rules = (autoTrade as Record<string, unknown>).rules
+  return Array.isArray(rules) ? rules as AutoTradeRule[] : []
+}
 
-  const now = Date.now()
-  if (now - lastBuyAt.value < cooldownVal * 1000) return
+function createRule(): AutoTradeRule {
+  const trigger = Math.min(0.999, Math.max(0.001, getNumeric(triggerPrice.value, DEFAULT_TRIGGER_PRICE)))
+  const budgetValue = Math.max(1, getNumeric(budget.value, DEFAULT_BUDGET))
+  const cooldownValue = Math.max(1, getNumeric(cooldown.value, DEFAULT_COOLDOWN))
 
-  const size = Number((budgetVal / ask).toFixed(2))
-  if (!size || Number.isNaN(size) || size <= 0) return
+  return {
+    id: ruleId.value,
+    type: 'condition_buy',
+    enabled: enabled.value,
+    priority: 200,
+    scope: {
+      outcome: props.outcome,
+    },
+    cooldown_seconds: cooldownValue,
+    config: {
+      trigger_price_lte: trigger,
+      budget_usdc: budgetValue,
+      order_type: 'GTC',
+    },
+    risk: {
+      max_total_budget: 0,
+      max_order_count: 0,
+      max_slippage: 0,
+    },
+  }
+}
 
-  submitting.value = true
-  try {
-    lastBuyAt.value = now
-    await submitOrder({
-      tokenId: props.tokenId,
-      side: 'BUY',
-      price: ask,
-      size,
-    })
-    toastStore.showToast(`触价买入成功 ${props.outcome} @ ${ask.toFixed(3)} (${size})`, 'success')
-    if (taskStore.currentTaskId) {
-      void requestPositionRefresh()
+function syncFormFromState() {
+  const rules = autoTradeState.value?.rules
+  if (!Array.isArray(rules)) return
+  const found = rules.find((rule) => {
+    if (!rule || typeof rule !== 'object') return false
+    return (rule as Record<string, unknown>).id === ruleId.value
+  })
+  if (!found || typeof found !== 'object') return
+
+  const rule = found as Record<string, unknown>
+  enabled.value = !!rule.enabled
+  const cooldownValue = Number(rule.cooldown_seconds)
+  if (Number.isFinite(cooldownValue) && cooldownValue > 0) {
+    cooldown.value = String(cooldownValue)
+  }
+  const config = rule.config
+  if (config && typeof config === 'object') {
+    const trigger = Number((config as Record<string, unknown>).trigger_price_lte)
+    const budgetValue = Number((config as Record<string, unknown>).budget_usdc)
+    if (Number.isFinite(trigger) && trigger > 0) {
+      triggerPrice.value = trigger.toFixed(3)
     }
+    if (Number.isFinite(budgetValue) && budgetValue > 0) {
+      budget.value = String(budgetValue)
+    }
+  }
+}
+
+async function loadRuleFromTaskConfig() {
+  if (!currentTaskId.value || !authStore.token) return
+  try {
+    const response = await taskService.getTaskConfig(currentTaskId.value, authStore.token)
+    const rules = parseRules(response.config)
+    const found = rules.find((item) => item.id === ruleId.value)
+    if (!found) {
+      if (triggerPrice.value === DEFAULT_TRIGGER_PRICE.toFixed(3) && props.bestAsk !== null) {
+        triggerPrice.value = props.bestAsk.toFixed(3)
+      }
+      return
+    }
+
+    enabled.value = !!found.enabled
+    const cooldownValue = Number(found.cooldown_seconds)
+    if (Number.isFinite(cooldownValue) && cooldownValue > 0) {
+      cooldown.value = String(cooldownValue)
+    }
+
+    const config = found.config
+    if (config && typeof config === 'object') {
+      const cfg = config as Record<string, unknown>
+      const trigger = Number(cfg.trigger_price_lte)
+      const budgetValue = Number(cfg.budget_usdc)
+      if (Number.isFinite(trigger) && trigger > 0) {
+        triggerPrice.value = trigger.toFixed(3)
+      }
+      if (Number.isFinite(budgetValue) && budgetValue > 0) {
+        budget.value = String(budgetValue)
+      }
+    }
+  } catch {
+    // ignore load failures for panel resilience
+  }
+}
+
+async function onRuleChange() {
+  if (!currentTaskId.value) {
+    toastStore.showWarning('请先创建并订阅任务')
+    return
+  }
+  if (!authStore.token) {
+    toastStore.showWarning('请先登录')
+    return
+  }
+
+  requestPending.value = true
+  try {
+    const response = await taskService.getTaskConfig(currentTaskId.value, authStore.token)
+    const config = response.config
+    const rules = parseRules(config)
+    const nextRule = createRule()
+    const nextRules = rules.filter((item) => item.id !== ruleId.value)
+    nextRules.push(nextRule)
+
+    await taskService.updateTaskConfig(
+      currentTaskId.value,
+      {
+        patch: {
+          auto_trade: {
+            enabled: true,
+            rules: nextRules,
+          },
+        },
+      },
+      authStore.token,
+    )
   } catch (error) {
-    toastStore.showToast(error instanceof Error ? error.message : '触价买入失败', 'error')
+    toastStore.showError(error instanceof Error ? error.message : '更新触价买入配置失败')
   } finally {
-    submitting.value = false
+    requestPending.value = false
   }
 }
 </script>
@@ -143,6 +217,7 @@ async function runAutoBuy() {
           v-model="enabled"
           type="checkbox"
           class="toggle toggle-xs toggle-success"
+          :disabled="requestPending || !currentTaskId"
           @change="onRuleChange"
         />
       </label>
@@ -157,6 +232,7 @@ async function runAutoBuy() {
           max="1"
           step="0.001"
           class="input input-bordered input-xs w-full"
+          :disabled="requestPending || !currentTaskId"
           @change="onRuleChange"
         />
       </label>
@@ -168,6 +244,7 @@ async function runAutoBuy() {
           min="1"
           step="1"
           class="input input-bordered input-xs w-full"
+          :disabled="requestPending || !currentTaskId"
           @change="onRuleChange"
         />
       </label>
@@ -179,9 +256,19 @@ async function runAutoBuy() {
           min="1"
           step="1"
           class="input input-bordered input-xs w-full"
+          :disabled="requestPending || !currentTaskId"
           @change="onRuleChange"
         />
       </label>
+    </div>
+
+    <div v-if="enabled || backendBuyCount > 0" class="mt-1.5 flex items-center justify-between text-[10px] text-base-content/50">
+      <span>后端执行中</span>
+      <span>已买 {{ backendBuyCount }}次 / ${{ backendTotalSpent.toFixed(2) }}</span>
+    </div>
+
+    <div v-if="!currentTaskId" class="mt-1 text-[10px] text-amber-600/80">
+      请先创建并订阅任务
     </div>
   </div>
 </template>

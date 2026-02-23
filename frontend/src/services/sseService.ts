@@ -305,6 +305,12 @@ export class SSEService {
         case 'auto_buy_state':
           this.handlers.onAutoBuyState?.(parsed)
           break
+        case 'auto_trade_state':
+          this.handlers.onAutoTradeState?.(parsed)
+          break
+        case 'auto_trade_execution':
+          this.handlers.onAutoTradeExecution?.(parsed)
+          break
         case 'auto_sell_state':
           this.handlers.onAutoSellState?.(parsed)
           break

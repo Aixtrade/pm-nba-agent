@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, watch, onUnmounted } from 'vue'
-import { useTaskStore, useToastStore } from '@/stores'
-import { submitOrder, canPlaceOrder, requestPositionRefresh } from '@/composables/usePolymarketOrder'
+import { computed, onUnmounted, ref, watch } from 'vue'
+import { useAuthStore, useGameStore, useTaskStore, useToastStore } from '@/stores'
+import { taskService } from '@/services/taskService'
 
 const props = defineProps<{
   tokenId: string
@@ -9,11 +9,12 @@ const props = defineProps<{
   bestAsk: number | null
 }>()
 
-const STORAGE_KEY = 'POLYMARKET_PERIODIC_BUY_CONFIG_V1'
 const DEFAULT_BUDGET = 10
 const DEFAULT_INTERVAL = 120
 const DEFAULT_MAX_TOTAL = 0
 
+const authStore = useAuthStore()
+const gameStore = useGameStore()
 const taskStore = useTaskStore()
 const toastStore = useToastStore()
 
@@ -21,86 +22,202 @@ const enabled = ref(false)
 const budgetUsdc = ref(DEFAULT_BUDGET)
 const intervalSeconds = ref(DEFAULT_INTERVAL)
 const maxTotalBudget = ref(DEFAULT_MAX_TOTAL)
+const requestPending = ref(false)
 
 const buyCount = ref(0)
 const totalSpent = ref(0)
 const lastBuyAt = ref(0)
-const submitting = ref(false)
 const countdown = ref(0)
+
+const autoTradeState = computed(() => gameStore.autoTradeState)
+const currentTaskId = computed(() => taskStore.currentTaskId)
+const ruleId = computed(() => `periodic_buy_${normalizeRuleSuffix(props.outcome)}`)
 
 // --- localStorage persistence (full-map, backward compat) ---
 
-interface StoredRule {
+interface AutoTradeRule {
+  id?: string
+  type?: string
   enabled: boolean
-  budgetUsdc: number
-  intervalSeconds: number
-  maxTotalBudget: number
+  budgetUsdc?: number
+  intervalSeconds?: number
+  maxTotalBudget?: number
+  priority?: number
+  scope?: Record<string, unknown>
+  cooldown_seconds?: number
+  config?: Record<string, unknown>
+  risk?: Record<string, unknown>
 }
 
-interface StoredStats {
-  buyCount: number
-  totalSpent: number
-  lastBuyAt: number
+interface RuleRuntime {
+  last_trigger_at?: number
+  last_order_at?: number
+  order_count?: number
+  total_spent?: number
+  next_run_at?: number
 }
 
-function loadConfig() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return
-    const parsed = JSON.parse(raw) as {
-      rules?: Record<string, StoredRule>
-      stats?: Record<string, StoredStats>
-    }
-    const rule = parsed.rules?.[props.outcome]
-    if (rule) {
-      enabled.value = false // never auto-resume on reload
-      budgetUsdc.value = rule.budgetUsdc
-      intervalSeconds.value = rule.intervalSeconds
-      maxTotalBudget.value = rule.maxTotalBudget
-    }
-    const stats = parsed.stats?.[props.outcome]
-    if (stats) {
-      buyCount.value = stats.buyCount
-      totalSpent.value = stats.totalSpent
-      lastBuyAt.value = stats.lastBuyAt
-    }
-  } catch {
-    // ignore
+watch(currentTaskId, () => {
+  void loadRuleFromTaskConfig()
+}, { immediate: true })
+
+watch(autoTradeState, () => {
+  syncFormFromState()
+  syncRuntimeFromState()
+})
+
+watch(() => props.outcome, () => {
+  void loadRuleFromTaskConfig()
+})
+
+function normalizeRuleSuffix(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+  return normalized || 'unknown'
+}
+
+function parseRules(config: Record<string, unknown>): AutoTradeRule[] {
+  const autoTrade = config.auto_trade
+  if (!autoTrade || typeof autoTrade !== 'object') return []
+  const rules = (autoTrade as Record<string, unknown>).rules
+  return Array.isArray(rules) ? rules as AutoTradeRule[] : []
+}
+
+function getRuleRuntime(): RuleRuntime | null {
+  const runtime = autoTradeState.value?.runtime
+  if (!runtime) return null
+  return runtime[ruleId.value] ?? null
+}
+
+function syncRuntimeFromState() {
+  const runtime = getRuleRuntime()
+  if (!runtime) return
+  buyCount.value = Number(runtime.order_count ?? 0)
+  totalSpent.value = Number(runtime.total_spent ?? 0)
+  if (Number.isFinite(runtime.last_order_at)) {
+    lastBuyAt.value = Number(runtime.last_order_at)
   }
 }
 
-function saveConfig() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    const parsed = raw
-      ? (JSON.parse(raw) as { rules?: Record<string, StoredRule>; stats?: Record<string, StoredStats> })
-      : {}
-    const rules = parsed.rules ?? {}
-    const stats = parsed.stats ?? {}
-    rules[props.outcome] = {
-      enabled: enabled.value,
-      budgetUsdc: budgetUsdc.value,
-      intervalSeconds: intervalSeconds.value,
-      maxTotalBudget: maxTotalBudget.value,
+function syncFormFromState() {
+  const rules = autoTradeState.value?.rules
+  if (!Array.isArray(rules)) return
+  const found = rules.find((rule) => {
+    if (!rule || typeof rule !== 'object') return false
+    return (rule as Record<string, unknown>).id === ruleId.value
+  })
+  if (!found || typeof found !== 'object') return
+
+  const rule = found as Record<string, unknown>
+  enabled.value = !!rule.enabled
+  const config = rule.config
+  if (config && typeof config === 'object') {
+    const cfg = config as Record<string, unknown>
+    const budgetValue = Number(cfg.budget_usdc)
+    const intervalValue = Number(cfg.interval_seconds)
+    const maxTotalValue = Number(cfg.max_total_budget)
+    if (Number.isFinite(budgetValue) && budgetValue > 0) {
+      budgetUsdc.value = budgetValue
     }
-    stats[props.outcome] = {
-      buyCount: buyCount.value,
-      totalSpent: totalSpent.value,
-      lastBuyAt: lastBuyAt.value,
+    if (Number.isFinite(intervalValue) && intervalValue >= 5) {
+      intervalSeconds.value = intervalValue
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ rules, stats }))
-  } catch {
-    // ignore
+    if (Number.isFinite(maxTotalValue) && maxTotalValue >= 0) {
+      maxTotalBudget.value = maxTotalValue
+    }
   }
 }
 
-loadConfig()
+async function loadRuleFromTaskConfig() {
+  if (!currentTaskId.value || !authStore.token) return
+  try {
+    const response = await taskService.getTaskConfig(currentTaskId.value, authStore.token)
+    const rules = parseRules(response.config)
+    const found = rules.find((item) => item.id === ruleId.value)
+    if (!found) return
 
-function onRuleChange() {
-  saveConfig()
+    enabled.value = !!found.enabled
+    const config = found.config
+    if (config && typeof config === 'object') {
+      const cfg = config as Record<string, unknown>
+      const budgetValue = Number(cfg.budget_usdc)
+      const intervalValue = Number(cfg.interval_seconds)
+      const maxTotalValue = Number(cfg.max_total_budget)
+      if (Number.isFinite(budgetValue) && budgetValue > 0) {
+        budgetUsdc.value = budgetValue
+      }
+      if (Number.isFinite(intervalValue) && intervalValue >= 5) {
+        intervalSeconds.value = intervalValue
+      }
+      if (Number.isFinite(maxTotalValue) && maxTotalValue >= 0) {
+        maxTotalBudget.value = maxTotalValue
+      }
+    }
+  } catch {
+    // ignore load failures for panel resilience
+  }
 }
 
-// --- Timer (per-instance) ---
+function createRule(): AutoTradeRule {
+  return {
+    id: ruleId.value,
+    type: 'periodic_buy',
+    enabled: enabled.value,
+    priority: 300,
+    scope: {
+      outcome: props.outcome,
+    },
+    cooldown_seconds: 0,
+    config: {
+      interval_seconds: Math.max(5, Math.floor(intervalSeconds.value || DEFAULT_INTERVAL)),
+      budget_usdc: Math.max(1, Number(budgetUsdc.value || DEFAULT_BUDGET)),
+      max_total_budget: Math.max(0, Number(maxTotalBudget.value || 0)),
+      order_type: 'GTC',
+    },
+    risk: {
+      max_total_budget: 0,
+      max_order_count: 0,
+      max_slippage: 0,
+    },
+  }
+}
+
+async function onRuleChange() {
+  if (!currentTaskId.value) {
+    toastStore.showWarning('请先创建并订阅任务')
+    return
+  }
+  if (!authStore.token) {
+    toastStore.showWarning('请先登录')
+    return
+  }
+
+  requestPending.value = true
+  try {
+    const response = await taskService.getTaskConfig(currentTaskId.value, authStore.token)
+    const config = response.config
+    const rules = parseRules(config)
+    const nextRule = createRule()
+    const nextRules = rules.filter((item) => item.id !== ruleId.value)
+    nextRules.push(nextRule)
+
+    await taskService.updateTaskConfig(
+      currentTaskId.value,
+      {
+        patch: {
+          auto_trade: {
+            enabled: true,
+            rules: nextRules,
+          },
+        },
+      },
+      authStore.token,
+    )
+  } catch (error) {
+    toastStore.showError(error instanceof Error ? error.message : '更新定时买入配置失败')
+  } finally {
+    requestPending.value = false
+  }
+}
 
 let tickTimer: ReturnType<typeof setInterval> | null = null
 
@@ -124,7 +241,6 @@ watch(enabled, (val) => {
   } else {
     stopTimer()
   }
-  saveConfig()
 }, { immediate: true })
 
 onUnmounted(() => {
@@ -136,73 +252,24 @@ function tick() {
     stopTimer()
     return
   }
-  const now = Date.now()
-  const elapsed = (now - lastBuyAt.value) / 1000
-  const remaining = Math.max(0, intervalSeconds.value - elapsed)
-  countdown.value = Math.ceil(remaining)
-
-  if (remaining <= 0) {
-    void runPeriodicBuy()
-  }
-}
-
-async function runPeriodicBuy() {
-  if (!enabled.value) return
-  if (submitting.value) return
-
-  const check = canPlaceOrder()
-  if (!check.ok) return
-
-  const ask = props.bestAsk
-  if (ask === null || Number.isNaN(ask) || ask <= 0 || ask >= 1) return
-
-  // Check max total budget cap
-  if (maxTotalBudget.value > 0 && totalSpent.value >= maxTotalBudget.value) {
-    enabled.value = false
-    saveConfig()
-    toastStore.showToast(`${props.outcome} 定时买入已达上限 $${maxTotalBudget.value}，已自动停止`, 'warning')
+  const nextRunAt = Number(getRuleRuntime()?.next_run_at ?? 0)
+  if (nextRunAt > 0) {
+    const remaining = Math.max(0, nextRunAt - Date.now() / 1000)
+    countdown.value = Math.ceil(remaining)
     return
   }
 
-  // Calculate effective budget (don't exceed remaining cap)
-  let effectiveBudget = budgetUsdc.value
-  if (maxTotalBudget.value > 0) {
-    const remaining = maxTotalBudget.value - totalSpent.value
-    effectiveBudget = Math.min(effectiveBudget, remaining)
-  }
-
-  const size = Number((effectiveBudget / ask).toFixed(2))
-  if (!size || Number.isNaN(size) || size <= 0) return
-
-  submitting.value = true
-  lastBuyAt.value = Date.now()
-  try {
-    await submitOrder({
-      tokenId: props.tokenId,
-      side: 'BUY',
-      price: ask,
-      size,
-    })
-    buyCount.value++
-    totalSpent.value += effectiveBudget
-    saveConfig()
-    toastStore.showToast(`定时买入成功 ${props.outcome} @ ${ask.toFixed(3)} (${size})`, 'success')
-    if (taskStore.currentTaskId) {
-      void requestPositionRefresh()
-    }
-  } catch (error) {
-    toastStore.showToast(error instanceof Error ? error.message : '定时买入失败', 'error')
-  } finally {
-    submitting.value = false
+  if (lastBuyAt.value > 0) {
+    const elapsed = Date.now() / 1000 - lastBuyAt.value
+    const remaining = Math.max(0, intervalSeconds.value - elapsed)
+    countdown.value = Math.ceil(remaining)
+  } else {
+    countdown.value = 0
   }
 }
 
 function resetStats() {
-  buyCount.value = 0
-  totalSpent.value = 0
-  lastBuyAt.value = 0
-  saveConfig()
-  toastStore.showToast(`${props.outcome} 定时买入统计已重置`, 'success')
+  toastStore.showToast('统计由后端维护，重置功能待接入', 'info')
 }
 
 function formatCountdown(seconds: number): string {
@@ -229,6 +296,8 @@ function formatCountdown(seconds: number): string {
             v-model="enabled"
             type="checkbox"
             class="toggle toggle-xs toggle-info"
+            :disabled="requestPending || !currentTaskId"
+            @change="onRuleChange"
           />
         </label>
       </div>
@@ -243,6 +312,7 @@ function formatCountdown(seconds: number): string {
           min="1"
           step="1"
           class="input input-bordered input-xs w-full"
+          :disabled="requestPending || !currentTaskId"
           @change="onRuleChange"
         />
       </label>
@@ -254,6 +324,7 @@ function formatCountdown(seconds: number): string {
           min="5"
           step="5"
           class="input input-bordered input-xs w-full"
+          :disabled="requestPending || !currentTaskId"
           @change="onRuleChange"
         />
       </label>
@@ -266,6 +337,7 @@ function formatCountdown(seconds: number): string {
           step="10"
           class="input input-bordered input-xs w-full"
           placeholder="0=无限"
+          :disabled="requestPending || !currentTaskId"
           @change="onRuleChange"
         />
       </label>
@@ -285,6 +357,10 @@ function formatCountdown(seconds: number): string {
           / 上限 ${{ maxTotalBudget }}
         </template>
       </span>
+    </div>
+
+    <div v-if="!currentTaskId" class="mt-1 text-[10px] text-amber-600/80">
+      请先创建并订阅任务
     </div>
   </div>
 </template>

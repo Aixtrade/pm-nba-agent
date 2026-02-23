@@ -43,6 +43,7 @@ export interface CreateTaskRequest {
   proxy_address?: string | null
   auto_buy?: AutoBuyConfig
   auto_sell?: AutoSellConfig
+  auto_trade?: AutoTradeConfig
 }
 
 // 创建任务响应
@@ -117,4 +118,22 @@ export interface AutoSellConfig {
     max_stale_seconds?: number
   }
   outcome_rules?: Record<string, AutoSellOutcomeRule>
+}
+
+export interface AutoTradeRule {
+  id?: string
+  type?: string
+  enabled?: boolean
+  priority?: number
+  scope?: Record<string, unknown>
+  cooldown_seconds?: number
+  config?: Record<string, unknown>
+  risk?: Record<string, unknown>
+}
+
+export interface AutoTradeConfig {
+  version?: number
+  enabled?: boolean
+  defaults?: Record<string, unknown>
+  rules?: AutoTradeRule[]
 }

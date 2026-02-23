@@ -183,6 +183,29 @@ export interface AutoBuyStateEventData {
   timestamp: string
 }
 
+export interface AutoTradeStateEventData {
+  enabled: boolean
+  version: number
+  defaults?: Record<string, unknown>
+  rules?: Array<Record<string, unknown>>
+  runtime?: Record<string, {
+    last_trigger_at?: number
+    last_order_at?: number
+    order_count?: number
+    total_spent?: number
+    next_run_at?: number
+  }>
+  timestamp: string
+}
+
+export interface AutoTradeExecutionEventData {
+  success: boolean
+  orders?: Array<Record<string, unknown>>
+  error?: string | null
+  source?: string
+  timestamp: string
+}
+
 export interface AutoSellStateEventData {
   enabled: boolean
   is_ordering: boolean
@@ -232,6 +255,8 @@ export type SSEEventType =
   | 'task_end'
   | 'subscribed'
   | 'auto_buy_state'
+  | 'auto_trade_state'
+  | 'auto_trade_execution'
   | 'auto_sell_state'
   | 'auto_sell_execution'
   | 'position_state'
@@ -248,6 +273,8 @@ export interface SSEEventHandlers {
   onError?: (data: ErrorEventData) => void
   onGameEnd?: (data: GameEndEventData) => void
   onAutoBuyState?: (data: AutoBuyStateEventData) => void
+  onAutoTradeState?: (data: AutoTradeStateEventData) => void
+  onAutoTradeExecution?: (data: AutoTradeExecutionEventData) => void
   onAutoSellState?: (data: AutoSellStateEventData) => void
   onAutoSellExecution?: (data: AutoSellExecutionEventData) => void
   onPositionState?: (data: PositionStateEventData) => void
