@@ -45,19 +45,17 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("GameAnalyzer 未配置 API Key，AI 分析功能不可用")
 
-    # 初始化 Redis（可选，仅在配置了 REDIS_URL 时启用）
+    # 初始化 Redis（必需，任务模式依赖 Redis）
     redis_url = os.getenv("REDIS_URL")
-    if redis_url:
-        try:
-            app.state.redis = RedisClient(redis_url)
-            await app.state.redis.connect()
-            logger.info("Redis 已连接")
-        except Exception as e:
-            logger.warning("Redis 连接失败，任务模式不可用: {}", e)
-            app.state.redis = None
-    else:
-        app.state.redis = None
-        logger.info("未配置 REDIS_URL，任务模式不可用")
+    if not redis_url:
+        raise RuntimeError("REDIS_URL 未配置，任务模式需要 Redis")
+
+    try:
+        app.state.redis = RedisClient(redis_url)
+        await app.state.redis.connect()
+        logger.info("Redis 已连接")
+    except Exception as e:
+        raise RuntimeError(f"Redis 连接失败: {e}") from e
 
     yield
 
@@ -108,7 +106,8 @@ async def root():
         "version": "1.0.0",
         "docs": "/docs",
         "endpoints": {
-            "stream": "POST /api/v1/live/stream",
+            "create_task": "POST /api/v1/tasks/create",
+            "subscribe": "GET /api/v1/live/subscribe/{task_id}",
             "health": "GET /health",
         }
     }

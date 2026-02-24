@@ -2,7 +2,6 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { sseService } from '@/services/sseService'
 import { taskService } from '@/services/taskService'
 import { useAuthStore, useConnectionStore, useGameStore, useTaskStore, useToastStore } from '@/stores'
-import type { LiveStreamRequest } from '@/types/sse'
 import type { CreateTaskRequest } from '@/types/task'
 
 export function useSSE() {
@@ -162,30 +161,6 @@ export function useSSE() {
     }
   }
 
-  async function connect(request: LiveStreamRequest) {
-    if (!authStore.isAuthenticated) {
-      connectionStore.setStatus('disconnected')
-      toastStore.showError('请先登录')
-      return
-    }
-
-    if (!isOnline.value) {
-      connectionStore.setStatus('disconnected')
-      toastStore.showError('网络不可用')
-      return
-    }
-
-    connectionStore.setStatus('connecting')
-    gameStore.reset()
-
-    try {
-      await sseService.connect(request, authStore.token)
-    } catch (error) {
-      console.warn('SSE connect failed:', error)
-      // 状态由 sseService 的错误处理更新
-    }
-  }
-
   function disconnect() {
     sseService.disconnect()
     connectionStore.setStatus('disconnected')
@@ -311,7 +286,6 @@ export function useSSE() {
   })
 
   return {
-    connect,
     disconnect,
     reconnect,
     subscribeTask,

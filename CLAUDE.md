@@ -43,23 +43,16 @@ docker compose up -d
 
 ### System Overview
 ```
-Frontend (Vue3) <-- SSE --> FastAPI API <-- WebSocket --> Polymarket
-                                |
-                                v
-                          NBA API (nba_api)
-                                |
-                          Redis (optional)
-                                |
-                          Worker (background tasks)
+Frontend (Vue3) <-- SSE --> FastAPI API <-- Redis Pub/Sub --> Worker
+                                                               |
+                                                         NBA API + Polymarket WS
 ```
 
-Two operating modes:
-1. **Direct streaming** — frontend opens SSE to `/api/v1/live/stream`, backend streams data directly (no Redis needed)
-2. **Task mode** — frontend creates a background task via `/api/v1/tasks/create`, worker process picks it up from Redis, frontend subscribes via `/api/v1/live/subscribe/{task_id}`
+**Task mode**: frontend creates a background task via `POST /api/v1/tasks/create`, Worker process picks it up from Redis, frontend subscribes via `GET /api/v1/live/subscribe/{task_id}`. Redis is required.
 
 ### Backend Modules (`pm_nba_agent/`)
 - `api/` — FastAPI app, routes, services
-  - `routes/`: `live_stream.py` (SSE), `tasks.py` (background tasks CRUD), `auth.py` (JWT login), `orders.py`, `positions.py`, `parse.py`
+  - `routes/`: `live_stream.py` (SSE task subscription), `tasks.py` (background tasks CRUD), `auth.py` (JWT login), `orders.py`, `positions.py`, `parse.py`
   - `services/game_stream.py` — core: integrates NBA data + Polymarket orderbook + strategy execution
 - `nba/` — NBA data fetching (team_resolver, game_finder, live_stats, playbyplay)
 - `polymarket/` — trading integration
@@ -75,19 +68,20 @@ Two operating modes:
 
 ### Frontend Modules (`frontend/src/`)
 - **Stores** (Pinia): `gameStore` (game data + signals), `taskStore` (background tasks), `authStore` (JWT), `connectionStore` (SSE state), `toastStore`
-- **Services**: `sseService.ts` (SSE connection + auto-reconnect), `autoBuyService.ts` (auto-execute merge_long signals), `taskService.ts` (task CRUD)
+- **Services**: `sseService.ts` (SSE task subscription + auto-reconnect), `autoBuyService.ts` (auto-execute merge_long signals), `taskService.ts` (task CRUD)
 - **Composables**: `useSSE.ts` (wires SSE events → stores)
 - **Views**: `MonitorView.vue` (main dashboard)
 - **Components**: `monitor/` — ScoreBoard, BoxScore, PolymarketBookPanel, StrategySignalPanel, StrategySidebar, StreamConfig, AgentAnalysisPanel
 
-### Data Flow (Direct Streaming)
-1. Frontend SSE → `POST /api/v1/live/stream`
-2. `GameStreamService` parses Polymarket URL, gets market info
-3. Subscribes Polymarket WebSocket for live orderbook
+### Data Flow (Task Mode)
+1. Frontend → `POST /api/v1/tasks/create` (creates background task)
+2. Worker picks up task from Redis, runs `GameStreamService`
+3. `GameStreamService` parses Polymarket URL, subscribes WebSocket for live orderbook
 4. Polls NBA API for scores, stats, play-by-play
 5. Strategy engine generates signals on orderbook changes
 6. AI analyzer periodically analyzes game state
-7. All data pushed to frontend via SSE events
+7. Worker publishes events to Redis Pub/Sub
+8. Frontend subscribes via `GET /api/v1/live/subscribe/{task_id}` (SSE)
 
 ### SSE Event Types
 `scoreboard`, `boxscore`, `polymarket_info`, `polymarket_book`, `strategy_signal`, `analysis_chunk`, `game_end`, `heartbeat`, `error`, `task_status`, `task_end`, `subscribed`, `auto_buy_state`, `auto_sell_state`, `auto_sell_execution`, `position_state`
@@ -123,7 +117,7 @@ ANALYSIS_INTERVAL=30             # Seconds between AI analyses
 ANALYSIS_EVENT_INTERVAL=15
 LOGIN_PASSPHRASE=change-me       # Auth passphrase
 LOGIN_TOKEN_SALT=change-me-salt  # JWT salt
-REDIS_URL=                       # Optional; enables task mode (redis://localhost:6379/0)
+REDIS_URL=redis://localhost:6379/0  # Required; used for task mode
 ```
 
 ## Code Conventions

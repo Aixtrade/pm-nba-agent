@@ -5,18 +5,6 @@
 
 import type { GameData } from './index'
 
-// SSE 请求参数
-export interface LiveStreamRequest {
-  url: string
-  poll_interval?: number
-  include_scoreboard?: boolean
-  include_boxscore?: boolean
-  analysis_interval?: number
-  strategy_ids?: string[]
-  strategy_params_map?: Record<string, Record<string, unknown>>
-  proxy_address?: string
-}
-
 // Scoreboard 事件数据
 export interface ScoreboardEventData {
   game_id: string
