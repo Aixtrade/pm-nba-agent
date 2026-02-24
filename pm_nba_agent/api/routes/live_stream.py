@@ -2,7 +2,8 @@
 
 import asyncio
 import json
-from typing import AsyncGenerator
+from datetime import datetime
+from typing import Any, AsyncGenerator, Optional
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
@@ -14,6 +15,15 @@ from ...shared import Channels, RedisClient, TaskState, TaskStatus
 
 
 router = APIRouter(prefix="/api/v1/live", tags=["live"])
+
+ACTIVE_TASK_STATES = {
+    TaskState.PENDING,
+    TaskState.RUNNING,
+    TaskState.CANCELLING,
+}
+
+USER_STREAM_SYNC_INTERVAL_SECONDS = 2.0
+USER_STREAM_HEARTBEAT_SECONDS = 15.0
 
 
 def require_redis(request: Request) -> RedisClient:
@@ -32,6 +42,99 @@ def normalize_sse_message(message: str) -> str:
     if "\\n" in message and "\n" not in message and message.startswith("event: "):
         return message.replace("\\n", "\n")
     return message
+
+
+def parse_sse_event(event: str) -> tuple[Optional[str], Optional[dict[str, Any]]]:
+    """解析 SSE 事件字符串，返回 (event_type, payload)"""
+    event_type: Optional[str] = None
+    payload_text: Optional[str] = None
+
+    for line in event.splitlines():
+        if line.startswith("event:"):
+            event_type = line[6:].strip()
+        elif line.startswith("data:") and payload_text is None:
+            payload_text = line[5:].strip()
+
+    if not event_type:
+        return None, None
+    if not payload_text:
+        return event_type, None
+
+    try:
+        parsed = json.loads(payload_text)
+    except Exception:
+        return event_type, None
+
+    if not isinstance(parsed, dict):
+        return event_type, None
+
+    return event_type, parsed
+
+
+def format_sse_event(event_type: str, payload: dict[str, Any]) -> str:
+    """格式化 SSE 消息"""
+    return f"event: {event_type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def now_iso() -> str:
+    """当前 UTC 时间（ISO）"""
+    return datetime.utcnow().isoformat() + "Z"
+
+
+def to_task_execution_payload(task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """标准化 task_execution 事件 payload"""
+    return {
+        "task_id": task_id,
+        "source": str(payload.get("source", "unknown")),
+        "success": bool(payload.get("success", False)),
+        "orders": payload.get("orders") if isinstance(payload.get("orders"), list) else [],
+        "error": payload.get("error"),
+        "timestamp": str(payload.get("timestamp", now_iso())),
+    }
+
+
+async def load_user_active_statuses(
+    redis: RedisClient,
+    user_id: str,
+) -> dict[str, TaskStatus]:
+    """加载用户当前活跃任务状态"""
+    task_ids = await redis.smembers(Channels.user_tasks(user_id))
+    result: dict[str, TaskStatus] = {}
+
+    for task_id in task_ids:
+        data = await redis.get(Channels.task_status(task_id))
+        if not data:
+            continue
+        try:
+            status = TaskStatus.from_json(data)
+        except Exception:
+            continue
+        if status.user_id and status.user_id != user_id:
+            continue
+        if status.state in ACTIVE_TASK_STATES:
+            result[task_id] = status
+
+    return result
+
+
+async def sync_pubsub_task_channels(
+    pubsub: Any,
+    desired_task_ids: set[str],
+    subscribed_task_ids: set[str],
+) -> set[str]:
+    """同步 PubSub 订阅的任务 Channel 集合"""
+    to_subscribe = desired_task_ids - subscribed_task_ids
+    to_unsubscribe = subscribed_task_ids - desired_task_ids
+
+    if to_subscribe:
+        channels = [Channels.task_events(task_id) for task_id in to_subscribe]
+        await pubsub.subscribe(*channels)
+
+    if to_unsubscribe:
+        channels = [Channels.task_events(task_id) for task_id in to_unsubscribe]
+        await pubsub.unsubscribe(*channels)
+
+    return set(desired_task_ids)
 
 
 @router.get("/subscribe/{task_id}")
@@ -169,4 +272,173 @@ async def subscribe_task(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         }
+    )
+
+
+@router.get("/subscribe/user/tasks")
+async def subscribe_user_tasks(request: Request) -> StreamingResponse:
+    """
+    用户级任务总览聚合流（单连接）。
+
+    聚合当前用户所有活跃任务（pending/running/cancelling）的关键事件：
+    - task_status
+    - task_end
+    - task_position_state
+    - task_execution
+    - heartbeat
+    """
+    user_id = require_auth(request)
+    redis = require_redis(request)
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        pubsub = None
+        subscribed_task_ids: set[str] = set()
+        active_task_ids: set[str] = set()
+        known_status: dict[str, str] = {}
+        sent_position_snapshot: set[str] = set()
+        loop = asyncio.get_running_loop()
+        next_sync_at = 0.0
+        next_heartbeat_at = 0.0
+
+        try:
+            pubsub = redis.client.pubsub()
+            yield format_sse_event("subscribed", {"scope": "user_tasks", "timestamp": now_iso()})
+
+            while True:
+                if await request.is_disconnected():
+                    break
+
+                now = loop.time()
+
+                if now >= next_sync_at:
+                    active_statuses = await load_user_active_statuses(redis, user_id)
+                    desired_task_ids = set(active_statuses.keys())
+                    subscribed_task_ids = await sync_pubsub_task_channels(
+                        pubsub,
+                        desired_task_ids=desired_task_ids,
+                        subscribed_task_ids=subscribed_task_ids,
+                    )
+
+                    # 发布活跃任务状态，帮助前端建立任务上下文
+                    for task_id, status in active_statuses.items():
+                        status_json = status.to_json()
+                        if known_status.get(task_id) != status_json:
+                            known_status[task_id] = status_json
+                            yield format_sse_event("task_status", status.to_dict())
+
+                        # 每个活跃任务在连接期间只回放一次持仓快照
+                        if task_id not in sent_position_snapshot:
+                            snapshot_key = Channels.task_snapshot(task_id, "position_state")
+                            snapshot_event = await redis.get(snapshot_key)
+                            if snapshot_event:
+                                event_type, payload = parse_sse_event(normalize_sse_message(snapshot_event))
+                                if event_type == "position_state" and isinstance(payload, dict):
+                                    yield format_sse_event("task_position_state", {
+                                        "task_id": task_id,
+                                        **payload,
+                                    })
+                            sent_position_snapshot.add(task_id)
+
+                    # 检测刚结束的任务并发 task_end
+                    ended_task_ids = active_task_ids - desired_task_ids
+                    for task_id in ended_task_ids:
+                        status_data = await redis.get(Channels.task_status(task_id))
+                        if not status_data:
+                            continue
+                        try:
+                            status = TaskStatus.from_json(status_data)
+                        except Exception:
+                            continue
+                        if status.user_id and status.user_id != user_id:
+                            continue
+                        if status.state in (TaskState.COMPLETED, TaskState.CANCELLED, TaskState.FAILED):
+                            yield format_sse_event("task_end", {
+                                "task_id": task_id,
+                                "state": status.state.value,
+                            })
+
+                    active_task_ids = desired_task_ids
+                    known_status = {task_id: text for task_id, text in known_status.items() if task_id in active_task_ids}
+                    sent_position_snapshot = {task_id for task_id in sent_position_snapshot if task_id in active_task_ids}
+                    next_sync_at = now + USER_STREAM_SYNC_INTERVAL_SECONDS
+
+                    # 无活跃任务时主动结束 SSE 连接（由前端按需重连）
+                    if not active_task_ids:
+                        yield format_sse_event("idle", {
+                            "reason": "no_active_tasks",
+                            "timestamp": now_iso(),
+                        })
+                        break
+
+                if now >= next_heartbeat_at:
+                    yield format_sse_event("heartbeat", {"timestamp": now_iso()})
+                    next_heartbeat_at = now + USER_STREAM_HEARTBEAT_SECONDS
+
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if not message or message.get("type") != "message":
+                    continue
+
+                channel = str(message.get("channel", ""))
+                task_id = Channels.parse_task_id(channel)
+                if not task_id:
+                    continue
+
+                event_data = normalize_sse_message(str(message.get("data", "")))
+                event_type, payload = parse_sse_event(event_data)
+                if not event_type or not isinstance(payload, dict):
+                    continue
+
+                if event_type == "task_status":
+                    yield format_sse_event("task_status", payload)
+                    continue
+
+                if event_type == "task_end":
+                    yield format_sse_event("task_end", {
+                        "task_id": task_id,
+                        "state": str(payload.get("state", "")),
+                    })
+                    continue
+
+                if event_type == "position_state":
+                    yield format_sse_event("task_position_state", {
+                        "task_id": task_id,
+                        **payload,
+                    })
+                    continue
+
+                if event_type in ("auto_trade_execution", "auto_sell_execution"):
+                    yield format_sse_event("task_execution", to_task_execution_payload(task_id, payload))
+                    continue
+
+                if event_type == "strategy_signal":
+                    execution = payload.get("execution")
+                    if isinstance(execution, dict) and execution.get("source") == "task_auto_buy":
+                        yield format_sse_event("task_execution", to_task_execution_payload(task_id, execution))
+
+        except RedisConnectionError as e:
+            logger.error("Redis 连接错误 (user={}): {}", user_id, e)
+            error_payload = {
+                "code": "REDIS_CONNECTION_ERROR",
+                "message": "服务器繁忙，请稍后重试",
+                "recoverable": True,
+                "timestamp": now_iso(),
+            }
+            yield format_sse_event("error", error_payload)
+        finally:
+            if pubsub:
+                try:
+                    if subscribed_task_ids:
+                        await pubsub.unsubscribe(*[Channels.task_events(task_id) for task_id in subscribed_task_ids])
+                    await pubsub.aclose()
+                except Exception:
+                    pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )

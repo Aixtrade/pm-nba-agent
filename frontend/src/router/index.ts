@@ -3,6 +3,7 @@ import { sseService } from '@/services/sseService'
 import { useAuthStore } from '@/stores'
 import MonitorView from '@/views/MonitorView.vue'
 import LoginView from '@/views/LoginView.vue'
+import TaskOverviewView from '@/views/TaskOverviewView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -17,6 +18,15 @@ const router = createRouter({
       component: MonitorView,
       meta: {
         title: 'NBA 实时监控',
+        requiresAuth: true,
+      },
+    },
+    {
+      path: '/task-overview',
+      name: 'task-overview',
+      component: TaskOverviewView,
+      meta: {
+        title: '任务总览',
         requiresAuth: true,
       },
     },

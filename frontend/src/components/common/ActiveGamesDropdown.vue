@@ -171,6 +171,14 @@ onUnmounted(() => {
         </button>
       </div>
 
+      <RouterLink
+        to="/task-overview"
+        class="btn btn-outline btn-sm w-full mb-2 justify-start"
+        @click="close"
+      >
+        任务总览
+      </RouterLink>
+
       <div v-if="activeTasks.length" class="space-y-1.5 max-h-64 overflow-y-auto">
         <div
           v-for="task in activeTasks"

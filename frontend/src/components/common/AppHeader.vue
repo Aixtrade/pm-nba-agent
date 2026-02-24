@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useSSE } from '@/composables/useSSE'
 import { useAuthStore, useConnectionStore, useTaskStore, useToastStore } from '@/stores'
 import { taskService } from '@/services/taskService'
@@ -11,12 +11,15 @@ import ActiveGamesDropdown from './ActiveGamesDropdown.vue'
 import UserMenu from './UserMenu.vue'
 
 const router = useRouter()
+const route = useRoute()
 const { disconnect, reconnect, subscribeTask, createAndSubscribe } = useSSE()
 const authStore = useAuthStore()
 const connectionStore = useConnectionStore()
 const taskStore = useTaskStore()
 const toastStore = useToastStore()
 const gameCommandBarKey = ref(0)
+const lastRouteTaskId = ref<string | null>(null)
+const showSingleTaskConnection = computed(() => route.name !== 'task-overview')
 
 type CreateTaskCallbacks = {
   onSuccess?: () => void
@@ -38,7 +41,33 @@ async function handleCreateAndSubscribe(request: CreateTaskRequest, callbacks?: 
 }
 
 function handleSubscribeTask(taskId: string) {
+  if (route.name !== 'monitor' || route.query.task_id !== taskId) {
+    void router.push({
+      name: 'monitor',
+      query: { task_id: taskId },
+    })
+  }
   subscribeTask(taskId)
+}
+
+function maybeSubscribeTaskFromRoute() {
+  if (!authStore.isAuthenticated) return
+  if (route.name !== 'monitor') return
+
+  const queryTaskId = route.query.task_id
+  if (typeof queryTaskId !== 'string' || !queryTaskId.trim()) return
+
+  const taskId = queryTaskId.trim()
+  if (
+    lastRouteTaskId.value === taskId
+    && taskStore.currentTaskId === taskId
+    && (connectionStore.isConnected || connectionStore.isConnecting)
+  ) {
+    return
+  }
+
+  lastRouteTaskId.value = taskId
+  handleSubscribeTask(taskId)
 }
 
 async function handleCancelTask(taskId: string) {
@@ -100,6 +129,14 @@ function handleLogout() {
   authStore.logout()
   router.push({ name: 'login' })
 }
+
+watch(
+  () => [route.name, route.query.task_id, authStore.isAuthenticated, taskStore.currentTaskId],
+  () => {
+    maybeSubscribeTaskFromRoute()
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -114,9 +151,9 @@ function handleLogout() {
           @subscribe="handleSubscribeTask"
           @cancel="handleCancelTask"
         />
-        <ConnectionStatus />
+        <ConnectionStatus v-if="showSingleTaskConnection" />
         <button
-          v-if="connectionStore.isError"
+          v-if="showSingleTaskConnection && connectionStore.isError"
           class="btn btn-error btn-xs"
           @click="handleReconnect"
         >
