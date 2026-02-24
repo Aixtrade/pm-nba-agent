@@ -133,6 +133,7 @@ export interface AutoTradeRule {
 
 export interface AutoTradeConfig {
   version?: number
+  config_version?: number
   enabled?: boolean
   defaults?: Record<string, unknown>
   rules?: AutoTradeRule[]

@@ -130,6 +130,35 @@ class RuleEngine:
                     intents.append(intent)
         return intents
 
+    def on_config_updated(self, old_auto_trade: dict[str, Any], new_auto_trade: dict[str, Any]) -> None:
+        """配置更新后同步运行态（避免规则重新开启时沿用旧计时窗口）"""
+        old_enabled_map = self._build_enabled_rule_map(old_auto_trade)
+        new_enabled_map = self._build_enabled_rule_map(new_auto_trade)
+
+        for rule_id in list(self.runtime.keys()):
+            if rule_id not in new_enabled_map or not new_enabled_map[rule_id]:
+                self.runtime.pop(rule_id, None)
+
+        for rule_id, is_enabled in new_enabled_map.items():
+            if is_enabled and not old_enabled_map.get(rule_id, False):
+                self.runtime[rule_id] = RuleRuntimeState()
+
+    @staticmethod
+    def _build_enabled_rule_map(auto_trade: dict[str, Any]) -> dict[str, bool]:
+        if not isinstance(auto_trade, dict):
+            return {}
+        rules = auto_trade.get("rules")
+        if not isinstance(rules, list):
+            return {}
+
+        enabled_map: dict[str, bool] = {}
+        for index, rule in enumerate(rules):
+            if not isinstance(rule, dict):
+                continue
+            rule_id = str(rule.get("id", "")).strip() or f"rule_{index + 1}"
+            enabled_map[rule_id] = bool(rule.get("enabled", True))
+        return enabled_map
+
     def _eval_signal_buy(self, rule: dict[str, Any], payload: dict[str, Any]) -> list[OrderIntent]:
         signal = payload.get("signal") if isinstance(payload.get("signal"), dict) else {}
         strategy = payload.get("strategy") if isinstance(payload.get("strategy"), dict) else {}
@@ -239,8 +268,10 @@ class RuleEngine:
         budget = float(cfg.get("budget_usdc", 10.0))
         max_total = max(0.0, float(cfg.get("max_total_budget", 0.0)))
 
-        if state.last_order_at > 0 and now - state.last_order_at < interval:
-            state.next_run_at = state.last_order_at + interval
+        # Periodic rules should be throttled by the last trigger attempt, not only successful orders.
+        last_run_at = max(state.last_trigger_at, state.last_order_at)
+        if last_run_at > 0 and now - last_run_at < interval:
+            state.next_run_at = last_run_at + interval
             return None
 
         if max_total > 0 and state.total_spent >= max_total:
@@ -262,6 +293,8 @@ class RuleEngine:
             if size <= 0:
                 continue
 
+            state.last_trigger_at = now
+            state.next_run_at = now + interval
             return OrderIntent(
                 rule_id=rule_id,
                 rule_type="periodic_buy",
@@ -361,13 +394,17 @@ class GameTask:
 
         old_auto_sell_enabled = bool(
             self.config.auto_sell.get("enabled", False)
-            if isinstance(self.config.auto_sell, dict)
-            else False
+                if isinstance(self.config.auto_sell, dict)
+                else False
         )
+        old_auto_trade = copy.deepcopy(self.config.auto_trade) if isinstance(self.config.auto_trade, dict) else {}
 
         async with self._config_lock:
             merged = self._deep_merge_dict(self.config.to_dict(), patch)
             self.config = TaskConfig.from_dict(merged)
+
+        new_auto_trade = copy.deepcopy(self.config.auto_trade) if isinstance(self.config.auto_trade, dict) else {}
+        self._rule_engine.on_config_updated(old_auto_trade, new_auto_trade)
 
         new_auto_sell_enabled = bool(
             self.config.auto_sell.get("enabled", False)
@@ -840,6 +877,7 @@ class GameTask:
         payload = {
             "enabled": bool(cfg.get("enabled", False)),
             "version": int(cfg.get("version", 1)),
+            "config_version": int(cfg.get("config_version", 0)),
             "defaults": cfg.get("defaults", {}),
             "rules": cfg.get("rules", []),
             "runtime": self._rule_engine.get_runtime_snapshot(),

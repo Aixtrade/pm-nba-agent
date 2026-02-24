@@ -174,6 +174,7 @@ export interface AutoBuyStateEventData {
 export interface AutoTradeStateEventData {
   enabled: boolean
   version: number
+  config_version?: number
   defaults?: Record<string, unknown>
   rules?: Array<Record<string, unknown>>
   runtime?: Record<string, {

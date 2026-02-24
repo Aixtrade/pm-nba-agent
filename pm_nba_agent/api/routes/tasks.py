@@ -351,7 +351,8 @@ async def update_task_config(
         raise HTTPException(status_code=404, detail="任务配置不存在")
 
     config = TaskConfig.from_json(config_data)
-    merged_config = _deep_merge_dict(config.to_dict(), body.patch)
+    patch_with_version = _attach_next_auto_trade_config_version(config.to_dict(), body.patch)
+    merged_config = _deep_merge_dict(config.to_dict(), patch_with_version)
     config = TaskConfig.from_dict(merged_config)
 
     await redis.set(config_key, config.to_json(), ex=86400)
@@ -359,7 +360,7 @@ async def update_task_config(
     control_message = json.dumps({
         "action": "update_config",
         "task_id": task_id,
-        "patch": body.patch,
+        "patch": patch_with_version,
     })
     await redis.publish(Channels.CONTROL, control_message)
 
@@ -393,3 +394,11 @@ def _deep_merge_dict(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, A
         else:
             merged[key] = value
     return merged
+
+
+def _attach_next_auto_trade_config_version(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    """在 patch 中附加递增的 auto_trade.config_version（用于前端抗旧状态覆盖）"""
+    base_auto_trade = base.get("auto_trade") if isinstance(base.get("auto_trade"), dict) else {}
+    current_version = int(base_auto_trade.get("config_version", 0))
+    next_version = max(0, current_version) + 1
+    return _deep_merge_dict(patch, {"auto_trade": {"config_version": next_version}})

@@ -66,6 +66,7 @@ class TaskConfig:
     })
     auto_trade: dict[str, Any] = field(default_factory=lambda: {
         "version": 1,
+        "config_version": 0,
         "enabled": False,
         "defaults": {
             "order_type": "GTC",
@@ -334,6 +335,7 @@ def _normalize_auto_sell(value: Any) -> dict[str, Any]:
 def _default_auto_trade() -> dict[str, Any]:
     return {
         "version": 1,
+        "config_version": 0,
         "enabled": False,
         "defaults": {
             "order_type": "GTC",
@@ -374,6 +376,7 @@ def _normalize_auto_trade(
 
         return {
             "version": max(1, _to_int(value.get("version"), 1)),
+            "config_version": max(0, _to_int(value.get("config_version"), 0)),
             "enabled": bool(value.get("enabled", False)),
             "defaults": defaults,
             "rules": rules,
@@ -383,6 +386,7 @@ def _normalize_auto_trade(
     migrated_rules.extend(_migrate_legacy_auto_sell_rules(legacy_auto_sell))
     return {
         "version": 1,
+        "config_version": 0,
         "enabled": bool(migrated_rules),
         "defaults": base["defaults"],
         "rules": migrated_rules,

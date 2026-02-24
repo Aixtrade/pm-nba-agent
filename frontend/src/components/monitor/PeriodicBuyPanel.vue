@@ -23,6 +23,9 @@ const budgetUsdc = ref(DEFAULT_BUDGET)
 const intervalSeconds = ref(DEFAULT_INTERVAL)
 const maxTotalBudget = ref(DEFAULT_MAX_TOTAL)
 const requestPending = ref(false)
+const appliedConfigVersion = ref(0)
+const pendingEnabled = ref<boolean | null>(null)
+const pendingVersion = ref<number | null>(null)
 
 const buyCount = ref(0)
 const totalSpent = ref(0)
@@ -32,6 +35,7 @@ const countdown = ref(0)
 const autoTradeState = computed(() => gameStore.autoTradeState)
 const currentTaskId = computed(() => taskStore.currentTaskId)
 const ruleId = computed(() => `periodic_buy_${normalizeRuleSuffix(props.outcome)}`)
+const effectiveEnabled = computed(() => pendingEnabled.value ?? enabled.value)
 
 // --- localStorage persistence (full-map, backward compat) ---
 
@@ -82,6 +86,20 @@ function parseRules(config: Record<string, unknown>): AutoTradeRule[] {
   return Array.isArray(rules) ? rules as AutoTradeRule[] : []
 }
 
+function getConfigVersionFromState(): number {
+  const raw = Number(autoTradeState.value?.config_version ?? 0)
+  if (!Number.isFinite(raw) || raw < 0) return 0
+  return Math.floor(raw)
+}
+
+function getConfigVersionFromConfig(config: Record<string, unknown>): number {
+  const autoTrade = config.auto_trade
+  if (!autoTrade || typeof autoTrade !== 'object') return 0
+  const raw = Number((autoTrade as Record<string, unknown>).config_version ?? 0)
+  if (!Number.isFinite(raw) || raw < 0) return 0
+  return Math.floor(raw)
+}
+
 function getRuleRuntime(): RuleRuntime | null {
   const runtime = autoTradeState.value?.runtime
   if (!runtime) return null
@@ -99,13 +117,26 @@ function syncRuntimeFromState() {
 }
 
 function syncFormFromState() {
+  const incomingVersion = getConfigVersionFromState()
+  if (pendingVersion.value !== null && incomingVersion < pendingVersion.value) {
+    return
+  }
+  appliedConfigVersion.value = Math.max(appliedConfigVersion.value, incomingVersion)
+  if (pendingVersion.value !== null && incomingVersion >= pendingVersion.value) {
+    pendingVersion.value = null
+    pendingEnabled.value = null
+  }
+
   const rules = autoTradeState.value?.rules
   if (!Array.isArray(rules)) return
   const found = rules.find((rule) => {
     if (!rule || typeof rule !== 'object') return false
     return (rule as Record<string, unknown>).id === ruleId.value
   })
-  if (!found || typeof found !== 'object') return
+  if (!found || typeof found !== 'object') {
+    enabled.value = false
+    return
+  }
 
   const rule = found as Record<string, unknown>
   enabled.value = !!rule.enabled
@@ -131,9 +162,18 @@ async function loadRuleFromTaskConfig() {
   if (!currentTaskId.value || !authStore.token) return
   try {
     const response = await taskService.getTaskConfig(currentTaskId.value, authStore.token)
+    const configVersion = getConfigVersionFromConfig(response.config)
+    appliedConfigVersion.value = Math.max(appliedConfigVersion.value, configVersion)
+    if (pendingVersion.value !== null && configVersion >= pendingVersion.value) {
+      pendingVersion.value = null
+      pendingEnabled.value = null
+    }
     const rules = parseRules(response.config)
     const found = rules.find((item) => item.id === ruleId.value)
-    if (!found) return
+    if (!found) {
+      enabled.value = false
+      return
+    }
 
     enabled.value = !!found.enabled
     const config = found.config
@@ -191,6 +231,11 @@ async function onRuleChange() {
     return
   }
 
+  const targetEnabled = enabled.value
+  const optimisticVersion = Math.max(appliedConfigVersion.value, getConfigVersionFromState()) + 1
+  pendingEnabled.value = targetEnabled
+  pendingVersion.value = optimisticVersion
+
   requestPending.value = true
   try {
     const response = await taskService.getTaskConfig(currentTaskId.value, authStore.token)
@@ -212,7 +257,11 @@ async function onRuleChange() {
       },
       authStore.token,
     )
+    await loadRuleFromTaskConfig()
   } catch (error) {
+    pendingEnabled.value = null
+    pendingVersion.value = null
+    await loadRuleFromTaskConfig()
     toastStore.showError(error instanceof Error ? error.message : '更新定时买入配置失败')
   } finally {
     requestPending.value = false
@@ -234,7 +283,7 @@ function stopTimer() {
   countdown.value = 0
 }
 
-watch(enabled, (val) => {
+watch(effectiveEnabled, (val) => {
   if (val) {
     lastBuyAt.value = 0
     startTimer()
@@ -248,7 +297,7 @@ onUnmounted(() => {
 })
 
 function tick() {
-  if (!enabled.value) {
+  if (!effectiveEnabled.value) {
     stopTimer()
     return
   }
@@ -344,10 +393,10 @@ function formatCountdown(seconds: number): string {
     </div>
 
     <div
-      v-if="enabled || buyCount > 0"
+      v-if="effectiveEnabled || buyCount > 0"
       class="mt-1.5 flex items-center justify-between text-[10px] text-base-content/50"
     >
-      <span v-if="enabled">
+      <span v-if="effectiveEnabled">
         下次: {{ formatCountdown(countdown) }}
       </span>
       <span v-else>&nbsp;</span>
