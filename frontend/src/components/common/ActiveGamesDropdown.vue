@@ -24,25 +24,6 @@ const activeTasks = computed(() =>
 
 const activeCount = computed(() => activeTasks.value.length)
 
-function getStateBadgeClass(state: TaskState): string {
-  switch (state) {
-    case 'running':
-      return 'badge-success'
-    case 'pending':
-      return 'badge-warning'
-    case 'cancelling':
-      return 'badge-warning'
-    case 'completed':
-      return 'badge-info'
-    case 'cancelled':
-      return 'badge-neutral'
-    case 'failed':
-      return 'badge-error'
-    default:
-      return 'badge-ghost'
-  }
-}
-
 function getStateLabel(state: TaskState): string {
   switch (state) {
     case 'pending':
@@ -57,6 +38,19 @@ function getStateLabel(state: TaskState): string {
       return '失败'
     default:
       return state
+  }
+}
+
+function getStateDotClass(state: TaskState): string {
+  switch (state) {
+    case 'running':
+      return 'bg-emerald-500'
+    case 'pending':
+      return 'bg-amber-500'
+    case 'cancelling':
+      return 'bg-orange-500'
+    default:
+      return 'bg-slate-400'
   }
 }
 
@@ -144,12 +138,12 @@ onUnmounted(() => {
     <!-- 下拉内容 -->
     <div
       v-if="isOpen"
-      class="absolute top-full left-0 mt-1 z-50 bg-base-100 rounded-box shadow-lg border border-base-200 w-80 p-3"
+      class="absolute top-full left-0 mt-1 z-50 bg-base-100 rounded-2xl shadow-xl border border-base-200 w-[360px] p-3"
     >
-      <div class="flex items-center justify-between mb-2">
-        <span class="text-sm font-semibold">活跃任务</span>
+      <div class="flex items-center justify-between">
+        <div class="text-base font-semibold tracking-tight">活跃任务</div>
         <button
-          class="btn btn-ghost btn-xs"
+          class="btn btn-ghost btn-xs text-base-content/60 hover:text-base-content"
           :disabled="isRefreshing"
           @click="refreshTasks"
         >
@@ -173,39 +167,44 @@ onUnmounted(() => {
 
       <RouterLink
         to="/task-overview"
-        class="btn btn-outline btn-sm w-full mb-2 justify-start"
+        class="mt-3 block rounded-xl border border-sky-200/70 bg-linear-to-r from-sky-50 to-cyan-50 px-3 py-2.5 hover:from-sky-100 hover:to-cyan-100 transition-colors"
         @click="close"
       >
-        任务总览
+        <div class="flex items-center justify-between gap-2">
+          <div class="min-w-0">
+            <div class="text-sm font-semibold text-sky-900">任务总览</div>
+            <div class="text-[11px] text-sky-800/70 truncate">查看全部任务持仓与执行</div>
+          </div>
+          <span class="text-sky-700 text-sm">→</span>
+        </div>
       </RouterLink>
 
-      <div v-if="activeTasks.length" class="space-y-1.5 max-h-64 overflow-y-auto">
+      <div class="my-3 h-px bg-base-200"></div>
+
+      <div v-if="activeTasks.length" class="space-y-1.5 max-h-72 overflow-y-auto pr-1">
         <div
           v-for="task in activeTasks"
           :key="task.task_id"
-          class="flex items-center gap-2 p-2 rounded-lg hover:bg-base-200/50 transition-colors"
+          class="flex items-center gap-2 rounded-lg border border-base-200/70 bg-base-100 px-2.5 py-2 hover:border-base-300 hover:bg-base-200/35 transition-colors"
           :class="{
-            'bg-primary/5 ring-1 ring-primary/20': task.task_id === taskStore.currentTaskId && connectionStore.isConnected,
+            'border-primary/35 bg-primary/5': task.task_id === taskStore.currentTaskId && connectionStore.isConnected,
           }"
         >
-          <div class="flex-1 min-w-0">
+          <div class="flex-1 min-w-0 pl-0.5">
             <div
-              class="text-sm font-medium truncate cursor-pointer hover:text-primary transition-colors"
+              class="flex items-center gap-2 text-sm font-semibold truncate cursor-pointer hover:text-primary transition-colors"
               @click="handleSubscribe(task)"
             >
-              {{ getTaskDisplayName(task) }}
+              <span class="h-2 w-2 rounded-full shrink-0" :class="getStateDotClass(task.state)"></span>
+              <span class="truncate">{{ getTaskDisplayName(task) }}</span>
             </div>
-            <div class="flex items-center gap-1.5 mt-0.5">
-              <span
-                v-if="task.state !== 'running'"
-                class="badge badge-xs"
-                :class="getStateBadgeClass(task.state)"
-              >
-                {{ getStateLabel(task.state) }}
-              </span>
+            <div class="mt-0.5 flex items-center gap-1.5 text-[11px] text-base-content/55">
+              <span>{{ getStateLabel(task.state) }}</span>
+              <span>·</span>
+              <span>#{{ task.task_id.slice(-4) }}</span>
               <span
                 v-if="task.task_id === taskStore.currentTaskId && connectionStore.isConnected"
-                class="badge badge-xs badge-outline badge-success"
+                class="badge badge-xs badge-outline badge-success ml-1"
               >
                 正在观看
               </span>
@@ -214,7 +213,7 @@ onUnmounted(() => {
 
           <div class="flex gap-1 shrink-0">
             <button
-              class="btn btn-ghost btn-xs"
+              class="btn btn-ghost btn-xs text-base-content/70 hover:text-base-content"
               :disabled="task.task_id === taskStore.currentTaskId && connectionStore.isConnected"
               title="查看"
               @click="handleSubscribe(task)"
@@ -225,7 +224,7 @@ onUnmounted(() => {
               </svg>
             </button>
             <button
-              class="btn btn-ghost btn-xs text-error"
+              class="btn btn-ghost btn-xs text-error/80 hover:text-error"
               title="停止"
               :disabled="task.state === 'cancelling'"
               @click="handleCancel(task.task_id)"
@@ -238,8 +237,8 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div v-else class="text-sm text-base-content/50 py-4 text-center">
-        暂无活跃任务
+      <div v-else class="py-7 text-center">
+        <div class="text-sm text-base-content/55">暂无活跃任务</div>
       </div>
     </div>
 

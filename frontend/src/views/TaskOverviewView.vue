@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue"
 import { useRouter } from "vue-router"
-import { useSSE } from "@/composables/useSSE"
 import { taskOverviewSSEService } from "@/services/taskOverviewSSEService"
 import { useAuthStore, useTaskOverviewStore, useToastStore } from "@/stores"
 import type { TaskState } from "@/types/task"
@@ -10,7 +9,6 @@ const authStore = useAuthStore()
 const toastStore = useToastStore()
 const overviewStore = useTaskOverviewStore()
 const router = useRouter()
-const { subscribeTask } = useSSE()
 
 const streamConnected = ref(false)
 
@@ -81,13 +79,10 @@ function executionClass(success: boolean): string {
 }
 
 function openTask(taskId: string) {
-  if (router.currentRoute.value.name !== "monitor" || router.currentRoute.value.query.task_id !== taskId) {
-    void router.push({
-      name: "monitor",
-      query: { task_id: taskId },
-    })
-  }
-  void subscribeTask(taskId)
+  void router.push({
+    name: "monitor",
+    query: { task_id: taskId },
+  })
 }
 
 function refreshActiveTaskBindings() {

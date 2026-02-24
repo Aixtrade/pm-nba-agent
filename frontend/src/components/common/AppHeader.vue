@@ -31,7 +31,11 @@ const TERMINAL_STATES: TaskState[] = ['completed', 'cancelled', 'failed']
 
 async function handleCreateAndSubscribe(request: CreateTaskRequest, callbacks?: CreateTaskCallbacks) {
   try {
-    await createAndSubscribe(request)
+    const taskId = await createAndSubscribe(request)
+    void router.push({
+      name: 'monitor',
+      query: { task_id: taskId },
+    })
     callbacks?.onSuccess?.()
   } catch {
     callbacks?.onError?.()
@@ -95,6 +99,11 @@ async function handleCancelTask(taskId: string) {
       disconnect()
       gameCommandBarKey.value += 1
     }
+
+    // 删除后统一回到 monitor，避免保留失效 task_id 查询参数
+    if (route.name !== 'monitor' || typeof route.query.task_id === 'string') {
+      void router.replace({ name: 'monitor' })
+    }
   } catch (error) {
     toastStore.showError(error instanceof Error ? error.message : '删除任务失败')
   }
@@ -131,7 +140,7 @@ function handleLogout() {
 }
 
 watch(
-  () => [route.name, route.query.task_id, authStore.isAuthenticated, taskStore.currentTaskId],
+  () => [route.name, route.query.task_id, authStore.isAuthenticated],
   () => {
     maybeSubscribeTaskFromRoute()
   },

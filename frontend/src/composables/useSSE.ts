@@ -69,6 +69,12 @@ export function useSSE() {
     },
     onError: (data) => {
       console.warn('SSE Error:', data)
+      if (data?.code === 'TASK_SUBSCRIBE_FAILED') {
+        connectionStore.setStatus('disconnected')
+        taskStore.setCurrentTask(null)
+        toastStore.showError(data.message || '任务订阅失败')
+        return
+      }
       if (data?.code === 'MAX_RETRIES_EXCEEDED') {
         connectionStore.setStatus('error')
         toastStore.showError(data.message || '连接失败，请手动重试')

@@ -245,6 +245,19 @@ export class SSEService {
             this.notifyStateChange()
           } else {
             const errorText = await response.text()
+            // 任务不存在/无权限/请求错误时，不应自动重连
+            if ([400, 401, 403, 404].includes(response.status)) {
+              this.isManualDisconnect = true
+              this.currentTaskId = null
+              this.cleanupConnection()
+              this.notifyStateChange()
+              this.handlers.onError?.({
+                code: 'TASK_SUBSCRIBE_FAILED',
+                message: `订阅失败(${response.status})，请检查任务是否存在`,
+                recoverable: false,
+                timestamp: new Date().toISOString(),
+              })
+            }
             throw new Error(`Failed to subscribe: ${response.status} ${errorText}`)
           }
         },
@@ -270,6 +283,11 @@ export class SSEService {
         onerror: (err) => {
           console.error('Task SSE Error:', err)
           this.stopHeartbeatMonitor()
+
+          if (this.isManualDisconnect && !this.currentTaskId) {
+            this.notifyStateChange()
+            return
+          }
 
           const willRetry =
             !this.isManualDisconnect && this.retryCount < RECONNECT_CONFIG.maxRetries
