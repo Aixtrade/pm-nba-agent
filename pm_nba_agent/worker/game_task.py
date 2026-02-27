@@ -1,11 +1,8 @@
-"""单场比赛任务封装"""
+"""单场比赛任务封装 — 纯协调层"""
 
 import asyncio
 import copy
 import json
-from dataclasses import dataclass, field
-from datetime import datetime
-import time
 from typing import Any, Optional
 
 from loguru import logger
@@ -14,327 +11,19 @@ from pm_nba_agent.api.models.requests import LiveStreamRequest
 from pm_nba_agent.api.services.data_fetcher import DataFetcher
 from pm_nba_agent.api.services.game_stream import GameStreamService
 from pm_nba_agent.agent import GameAnalyzer
-from pm_nba_agent.polymarket.models import PositionContext
-from pm_nba_agent.polymarket.orders import create_polymarket_order
-from pm_nba_agent.polymarket.positions import get_current_positions
 from pm_nba_agent.shared import Channels, RedisClient, TaskConfig, TaskState, TaskStatus
 
-
-@dataclass
-class OrderIntent:
-    rule_id: str
-    rule_type: str
-    token_id: str
-    side: str
-    price: float
-    size: float
-    outcome: str
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class RuleRuntimeState:
-    last_trigger_at: float = 0.0
-    last_order_at: float = 0.0
-    order_count: int = 0
-    total_spent: float = 0.0
-    next_run_at: float = 0.0
-
-
-class RiskGate:
-    """统一风控与去重入口（MVP 使用内存去重）"""
-
-    def __init__(self) -> None:
-        self._recent_keys: dict[str, float] = {}
-
-    def allow(self, *, dedupe_key: str, dedupe_ttl_sec: float = 3.0) -> bool:
-        now = time.time()
-        last = self._recent_keys.get(dedupe_key, 0.0)
-        if now - last < dedupe_ttl_sec:
-            return False
-        self._recent_keys[dedupe_key] = now
-        return True
-
-    @staticmethod
-    def check_basic(intent: OrderIntent, min_order_amount: float) -> tuple[bool, Optional[str]]:
-        if intent.price <= 0 or intent.price >= 1:
-            return False, "价格非法"
-        if intent.size <= 0:
-            return False, "份数非法"
-        amount = intent.price * intent.size
-        if amount < min_order_amount:
-            return False, f"下单金额过小: {amount:.4f} < {min_order_amount}"
-        return True, None
-
-
-class RuleEngine:
-    """规则调度器：产出下单意图，由 GameTask 统一执行。"""
-
-    def __init__(self, task: "GameTask") -> None:
-        self.task = task
-        self.runtime: dict[str, RuleRuntimeState] = {}
-        self.risk_gate = RiskGate()
-
-    def get_runtime_snapshot(self) -> dict[str, dict[str, Any]]:
-        return {
-            rule_id: {
-                "last_trigger_at": state.last_trigger_at,
-                "last_order_at": state.last_order_at,
-                "order_count": state.order_count,
-                "total_spent": state.total_spent,
-                "next_run_at": state.next_run_at,
-            }
-            for rule_id, state in self.runtime.items()
-        }
-
-    def _get_rules(self) -> list[dict[str, Any]]:
-        auto_trade = self.task.config.auto_trade if isinstance(self.task.config.auto_trade, dict) else {}
-        if not auto_trade.get("enabled", False):
-            return []
-        rules = auto_trade.get("rules")
-        if not isinstance(rules, list):
-            return []
-        valid = [r for r in rules if isinstance(r, dict) and r.get("enabled", True)]
-        return sorted(valid, key=lambda r: int(r.get("priority", 1000)))
-
-    def _state(self, rule_id: str) -> RuleRuntimeState:
-        if rule_id not in self.runtime:
-            self.runtime[rule_id] = RuleRuntimeState()
-        return self.runtime[rule_id]
-
-    def on_book_update(self) -> list[OrderIntent]:
-        intents: list[OrderIntent] = []
-        for rule in self._get_rules():
-            rule_type = str(rule.get("type", "")).strip()
-            if rule_type == "condition_buy":
-                intent = self._eval_condition_buy(rule)
-                if intent:
-                    intents.append(intent)
-        return intents
-
-    def on_strategy_signal(self, payload: dict[str, Any]) -> list[OrderIntent]:
-        intents: list[OrderIntent] = []
-        for rule in self._get_rules():
-            rule_type = str(rule.get("type", "")).strip()
-            if rule_type == "signal_buy":
-                intents.extend(self._eval_signal_buy(rule, payload))
-        return intents
-
-    def on_tick(self) -> list[OrderIntent]:
-        intents: list[OrderIntent] = []
-        for rule in self._get_rules():
-            rule_type = str(rule.get("type", "")).strip()
-            if rule_type == "periodic_buy":
-                intent = self._eval_periodic_buy(rule)
-                if intent:
-                    intents.append(intent)
-        return intents
-
-    def on_config_updated(self, old_auto_trade: dict[str, Any], new_auto_trade: dict[str, Any]) -> None:
-        """配置更新后同步运行态（避免规则重新开启时沿用旧计时窗口）"""
-        old_enabled_map = self._build_enabled_rule_map(old_auto_trade)
-        new_enabled_map = self._build_enabled_rule_map(new_auto_trade)
-
-        for rule_id in list(self.runtime.keys()):
-            if rule_id not in new_enabled_map or not new_enabled_map[rule_id]:
-                self.runtime.pop(rule_id, None)
-
-        for rule_id, is_enabled in new_enabled_map.items():
-            if is_enabled and not old_enabled_map.get(rule_id, False):
-                self.runtime[rule_id] = RuleRuntimeState()
-
-    @staticmethod
-    def _build_enabled_rule_map(auto_trade: dict[str, Any]) -> dict[str, bool]:
-        if not isinstance(auto_trade, dict):
-            return {}
-        rules = auto_trade.get("rules")
-        if not isinstance(rules, list):
-            return {}
-
-        enabled_map: dict[str, bool] = {}
-        for index, rule in enumerate(rules):
-            if not isinstance(rule, dict):
-                continue
-            rule_id = str(rule.get("id", "")).strip() or f"rule_{index + 1}"
-            enabled_map[rule_id] = bool(rule.get("enabled", True))
-        return enabled_map
-
-    def _eval_signal_buy(self, rule: dict[str, Any], payload: dict[str, Any]) -> list[OrderIntent]:
-        signal = payload.get("signal") if isinstance(payload.get("signal"), dict) else {}
-        strategy = payload.get("strategy") if isinstance(payload.get("strategy"), dict) else {}
-        signal_type = str(signal.get("type", "")).upper()
-        strategy_id = str(strategy.get("id", "")).strip()
-
-        scope = rule.get("scope") if isinstance(rule.get("scope"), dict) else {}
-        target_strategy = str(scope.get("strategy_id", "")).strip()
-        target_outcome = str(scope.get("outcome", self.task.BOTH_SIDE)).strip() or self.task.BOTH_SIDE
-
-        cfg = rule.get("config") if isinstance(rule.get("config"), dict) else {}
-        signal_types = cfg.get("signal_types") if isinstance(cfg.get("signal_types"), list) else ["BUY"]
-        allowed = {str(item).upper() for item in signal_types}
-        if allowed and signal_type not in allowed:
-            return []
-        if target_strategy and strategy_id != target_strategy:
-            return []
-
-        amount = float(cfg.get("amount", 10.0))
-        round_size = bool(cfg.get("round_size", False))
-        rule_id = str(rule.get("id", "signal_buy"))
-
-        outcomes = self.task._resolve_target_outcomes(target_outcome)
-        intents: list[OrderIntent] = []
-        for outcome in outcomes:
-            token_id = self.task._token_by_outcome.get(outcome)
-            best_ask = self.task._best_ask_by_token.get(token_id or "")
-            if not token_id or best_ask is None:
-                continue
-            size = self.task._calculate_size(amount, best_ask, round_size)
-            if size <= 0:
-                continue
-            intents.append(OrderIntent(
-                rule_id=rule_id,
-                rule_type="signal_buy",
-                token_id=token_id,
-                side="BUY",
-                price=best_ask,
-                size=size,
-                outcome=outcome,
-                metadata={
-                    "strategy_id": strategy_id,
-                    "order_type": str(cfg.get("order_type", "GTC")),
-                },
-            ))
-        return intents
-
-    def _eval_condition_buy(self, rule: dict[str, Any]) -> Optional[OrderIntent]:
-        rule_id = str(rule.get("id", "condition_buy"))
-        state = self._state(rule_id)
-        now = time.time()
-
-        cooldown = float(rule.get("cooldown_seconds", 0.0))
-        if cooldown > 0 and now - state.last_order_at < cooldown:
-            return None
-
-        scope = rule.get("scope") if isinstance(rule.get("scope"), dict) else {}
-        target_outcome = str(scope.get("outcome", self.task.BOTH_SIDE)).strip() or self.task.BOTH_SIDE
-        outcomes = self.task._resolve_target_outcomes(target_outcome)
-        if not outcomes:
-            return None
-
-        cfg = rule.get("config") if isinstance(rule.get("config"), dict) else {}
-        trigger = float(cfg.get("trigger_price_lte", 0.45))
-        budget = float(cfg.get("budget_usdc", 10.0))
-
-        for outcome in outcomes:
-            token_id = self.task._token_by_outcome.get(outcome)
-            ask = self.task._best_ask_by_token.get(token_id or "")
-            if not token_id or ask is None:
-                continue
-            if ask > trigger:
-                continue
-            size = float(int((budget / ask) * 100) / 100)
-            if size <= 0:
-                continue
-            return OrderIntent(
-                rule_id=rule_id,
-                rule_type="condition_buy",
-                token_id=token_id,
-                side="BUY",
-                price=ask,
-                size=size,
-                outcome=outcome,
-                metadata={
-                    "trigger_price_lte": trigger,
-                    "budget_usdc": budget,
-                    "order_type": str(cfg.get("order_type", "GTC")),
-                },
-            )
-
-        return None
-
-    def _eval_periodic_buy(self, rule: dict[str, Any]) -> Optional[OrderIntent]:
-        rule_id = str(rule.get("id", "periodic_buy"))
-        state = self._state(rule_id)
-        now = time.time()
-
-        scope = rule.get("scope") if isinstance(rule.get("scope"), dict) else {}
-        target_outcome = str(scope.get("outcome", self.task.BOTH_SIDE)).strip() or self.task.BOTH_SIDE
-        outcomes = self.task._resolve_target_outcomes(target_outcome)
-        if not outcomes:
-            return None
-
-        cfg = rule.get("config") if isinstance(rule.get("config"), dict) else {}
-        interval = max(5, int(cfg.get("interval_seconds", 120)))
-        budget = float(cfg.get("budget_usdc", 10.0))
-        max_total = max(0.0, float(cfg.get("max_total_budget", 0.0)))
-
-        # Periodic rules should be throttled by the last trigger attempt, not only successful orders.
-        last_run_at = max(state.last_trigger_at, state.last_order_at)
-        if last_run_at > 0 and now - last_run_at < interval:
-            state.next_run_at = last_run_at + interval
-            return None
-
-        if max_total > 0 and state.total_spent >= max_total:
-            return None
-
-        for outcome in outcomes:
-            token_id = self.task._token_by_outcome.get(outcome)
-            ask = self.task._best_ask_by_token.get(token_id or "")
-            if not token_id or ask is None:
-                continue
-
-            effective_budget = budget
-            if max_total > 0:
-                effective_budget = min(effective_budget, max_total - state.total_spent)
-            if effective_budget <= 0:
-                continue
-
-            size = float(int((effective_budget / ask) * 100) / 100)
-            if size <= 0:
-                continue
-
-            state.last_trigger_at = now
-            state.next_run_at = now + interval
-            return OrderIntent(
-                rule_id=rule_id,
-                rule_type="periodic_buy",
-                token_id=token_id,
-                side="BUY",
-                price=ask,
-                size=size,
-                outcome=outcome,
-                metadata={
-                    "interval_seconds": interval,
-                    "budget_usdc": effective_budget,
-                    "order_type": str(cfg.get("order_type", "GTC")),
-                },
-            )
-
-        return None
-
-    def mark_executed(self, intent: OrderIntent) -> None:
-        state = self._state(intent.rule_id)
-        now = time.time()
-        state.last_trigger_at = now
-        state.last_order_at = now
-        state.order_count += 1
-        if intent.side == "BUY":
-            state.total_spent += intent.price * intent.size
+from .auto_buy import AutoBuyHandler
+from .auto_sell import AutoSellHandler
+from .auto_trade import AutoTradeHandler
+from .event_bus import EventPublisher
+from .market_state import MarketState
+from .position_manager import PositionManager
+from .sse_utils import deep_merge_dict, format_sse_event, parse_sse_event
 
 
 class GameTask:
-    """单场比赛后台任务"""
-
-    SNAPSHOT_EVENTS = {
-        "polymarket_info",
-        "polymarket_book",
-        "scoreboard",
-        "auto_buy_state",
-        "auto_trade_state",
-        "auto_sell_state",
-        "position_state",
-    }
-    BOTH_SIDE = "__BOTH__"
+    """单场比赛后台任务 — 组装子模块并协调事件流。"""
 
     def __init__(
         self,
@@ -352,34 +41,39 @@ class GameTask:
         self._cancelled = False
         self._task: Optional[asyncio.Task] = None
         self._config_lock = asyncio.Lock()
-        self._rule_engine = RuleEngine(self)
 
-        # AutoBuy 运行态
-        self._token_by_outcome: dict[str, str] = {}
-        self._outcome_by_token: dict[str, str] = {}
-        self._best_ask_by_token: dict[str, float] = {}
-        self._best_bid_by_token: dict[str, float] = {}
-        self._auto_buy_is_ordering = False
-        self._auto_buy_last_order_time: Optional[str] = None
-        self._auto_buy_stats: dict[str, dict[str, Any]] = {}
-        self._market_condition_id: Optional[str] = None
-        self._market_outcomes: list[str] = []
+        # 子模块
+        self.market_state = MarketState()
+        self.publisher = EventPublisher(task_id, redis)
+        self.position_manager = PositionManager(
+            task_id=task_id,
+            market_state=self.market_state,
+            publisher=self.publisher,
+            config_provider=lambda: self.config,
+        )
+        self.auto_trade = AutoTradeHandler(
+            task_id=task_id,
+            config_provider=lambda: self.config,
+            market_state=self.market_state,
+            publisher=self.publisher,
+        )
+        self.auto_sell = AutoSellHandler(
+            task_id=task_id,
+            config_provider=lambda: self.config,
+            market_state=self.market_state,
+            position_manager=self.position_manager,
+            publisher=self.publisher,
+        )
+        self.auto_buy = AutoBuyHandler(
+            task_id=task_id,
+            config_provider=lambda: self.config,
+            market_state=self.market_state,
+            publisher=self.publisher,
+        )
 
-        # Positions 运行态
-        self._position_sides: list[dict[str, Any]] = []
-        self._positions_loading = False
-        self._positions_updated_at: Optional[str] = None
+        # 后台任务句柄
         self._position_refresh_task: Optional[asyncio.Task] = None
         self._auto_trade_tick_task: Optional[asyncio.Task] = None
-        self._position_refresh_lock = asyncio.Lock()
-        self._last_position_refresh_at = 0.0
-        self._initial_position_refresh_done = False
-
-        # AutoSell 运行态
-        self._auto_sell_is_ordering = False
-        self._auto_sell_last_order_time: Optional[str] = None
-        self._auto_sell_stats: dict[str, dict[str, Any]] = {}
-        self._auto_sell_last_sell_time: dict[str, str] = {}
 
     def cancel(self) -> None:
         """取消任务"""
@@ -394,17 +88,17 @@ class GameTask:
 
         old_auto_sell_enabled = bool(
             self.config.auto_sell.get("enabled", False)
-                if isinstance(self.config.auto_sell, dict)
-                else False
+            if isinstance(self.config.auto_sell, dict)
+            else False
         )
         old_auto_trade = copy.deepcopy(self.config.auto_trade) if isinstance(self.config.auto_trade, dict) else {}
 
         async with self._config_lock:
-            merged = self._deep_merge_dict(self.config.to_dict(), patch)
+            merged = deep_merge_dict(self.config.to_dict(), patch)
             self.config = TaskConfig.from_dict(merged)
 
         new_auto_trade = copy.deepcopy(self.config.auto_trade) if isinstance(self.config.auto_trade, dict) else {}
-        self._rule_engine.on_config_updated(old_auto_trade, new_auto_trade)
+        await self.auto_trade.on_config_updated(old_auto_trade, new_auto_trade)
 
         new_auto_sell_enabled = bool(
             self.config.auto_sell.get("enabled", False)
@@ -412,24 +106,31 @@ class GameTask:
             else False
         )
 
-        await self._publish_auto_buy_state()
-        await self._publish_auto_trade_state()
-        await self._publish_auto_sell_state()
+        await self.auto_buy.publish_state()
+        await self.auto_trade.publish_state()
+        await self.auto_sell.publish_state()
         if not old_auto_sell_enabled and new_auto_sell_enabled:
             await self.refresh_positions_once(force=True)
 
+    async def refresh_positions_once(self, force: bool = False) -> None:
+        await self.position_manager.refresh_once(force=force)
+
     async def run(self) -> None:
         """运行任务"""
-        status = await self._load_or_create_status()
+        status = await self.publisher.load_or_create_status()
         status.update_state(TaskState.RUNNING)
-        await self._save_status(status)
-        await self._publish_status(status)
-        await self._publish_auto_buy_state()
-        await self._publish_auto_trade_state()
-        await self._publish_auto_sell_state()
-        await self._publish_position_state()
-        self._position_refresh_task = asyncio.create_task(self._position_refresh_loop())
-        self._auto_trade_tick_task = asyncio.create_task(self._auto_trade_tick_loop())
+        await self.publisher.save_status(status)
+        await self.publisher.publish_status(status)
+        await self.auto_buy.publish_state()
+        await self.auto_trade.publish_state()
+        await self.auto_sell.publish_state()
+        await self.position_manager.publish_state()
+        self._position_refresh_task = asyncio.create_task(
+            self.position_manager.start_refresh_loop(lambda: self._cancelled)
+        )
+        self._auto_trade_tick_task = asyncio.create_task(
+            self.auto_trade.tick_loop(lambda: self._cancelled)
+        )
         await self.refresh_positions_once(force=True)
 
         try:
@@ -458,16 +159,14 @@ class GameTask:
                     await self._auto_trade_tick_task
                 except asyncio.CancelledError:
                     pass
-            await self._save_status(status)
-            await self._publish_status(status)
-            # 发送结束事件
-            await self._publish_event(
+            await self.publisher.save_status(status)
+            await self.publisher.publish_status(status)
+            await self.publisher.publish_raw(
                 f'event: task_end\ndata: {{"task_id": "{self.task_id}", "state": "{status.state.value}"}}\n\n'
             )
 
     async def _run_stream(self, status: TaskStatus) -> None:
         """运行数据流"""
-        # 构建 LiveStreamRequest
         request = LiveStreamRequest(
             url=self.config.url,
             poll_interval=self.config.poll_interval,
@@ -482,48 +181,43 @@ class GameTask:
             proxy_address=self.config.proxy_address,
         )
 
-        # 创建流服务
         stream_service = GameStreamService(
             self.fetcher,
             self.analyzer,
-            position_provider=self._get_strategy_position_context,
+            position_provider=self.position_manager.get_position_context,
             analysis_enabled_fn=lambda: self.config.enable_analysis,
         )
 
-        # 消费事件流并发布到 Redis
         async for event in stream_service.create_stream(request):
             if self._cancelled:
                 break
 
             event = await self._handle_runtime_event(event)
+            await self.publisher.publish_raw(event)
 
-            # 发布事件到 Redis Channel
-            await self._publish_event(event)
-
-            # 从 scoreboard 事件提取比赛信息
             if event.startswith("event: scoreboard"):
                 updated = self._extract_game_info(event, status)
                 if updated:
-                    await self._save_status(status)
-                    await self._publish_status(status)
+                    await self.publisher.save_status(status)
+                    await self.publisher.publish_status(status)
 
     async def _handle_runtime_event(self, event: str) -> str:
-        """处理运行时事件（自动买入与状态注入）"""
-        event_type, payload = self._parse_sse_event(event)
+        """处理运行时事件（市场数据更新 + 自动交易触发）"""
+        event_type, payload = parse_sse_event(event)
         if not event_type or payload is None:
             return event
 
         if event_type == "polymarket_info":
-            self._update_token_mapping(payload)
-            if not self._initial_position_refresh_done:
+            self.market_state.update_from_polymarket_info(payload)
+            if not self.position_manager.initial_refresh_done:
                 await self.refresh_positions_once(force=True)
-                self._initial_position_refresh_done = True
+                self.position_manager.mark_initial_done()
             return event
 
         if event_type == "polymarket_book":
-            self._update_best_prices(payload)
-            await self._maybe_execute_auto_sell()
-            await self._execute_intents(self._rule_engine.on_book_update())
+            self.market_state.update_from_polymarket_book(payload)
+            await self.auto_sell.maybe_execute()
+            await self.auto_trade.execute_intents(self.auto_trade.rule_engine.on_book_update())
             return event
 
         if event_type == "strategy_signal":
@@ -531,28 +225,11 @@ class GameTask:
 
         return event
 
-    async def _has_enabled_auto_trade_signal_buy(self) -> bool:
-        cfg = await self._get_auto_trade_config_snapshot()
-        if not cfg.get("enabled", False):
-            return False
-        rules = cfg.get("rules")
-        if not isinstance(rules, list):
-            return False
-
-        for rule in rules:
-            if not isinstance(rule, dict):
-                continue
-            if str(rule.get("type", "")).strip() != "signal_buy":
-                continue
-            if bool(rule.get("enabled", True)):
-                return True
-        return False
-
     async def _handle_strategy_signal(self, event: str, payload: dict[str, Any]) -> str:
-        await self._execute_intents(self._rule_engine.on_strategy_signal(payload))
+        await self.auto_trade.execute_intents(self.auto_trade.rule_engine.on_strategy_signal(payload))
 
         # 避免 legacy auto_buy 与 auto_trade.signal_buy 双通道重复下单
-        if await self._has_enabled_auto_trade_signal_buy():
+        if self.auto_trade.has_enabled_signal_buy():
             return event
 
         signal = payload.get("signal") if isinstance(payload.get("signal"), dict) else {}
@@ -563,11 +240,11 @@ class GameTask:
         if signal_type != "BUY" or not strategy_id:
             return event
 
-        cfg = await self._get_auto_buy_config_snapshot()
-        if not cfg.get("enabled", False):
+        auto_buy_cfg = self.auto_buy._get_auto_buy_config()
+        if not auto_buy_cfg.get("enabled", False):
             return event
 
-        rule = cfg.get("strategy_rules", {}).get(strategy_id)
+        rule = auto_buy_cfg.get("strategy_rules", {}).get(strategy_id)
         if not isinstance(rule, dict) or not rule.get("enabled", True):
             return event
 
@@ -580,827 +257,14 @@ class GameTask:
         if allowed_types and signal_type not in allowed_types:
             return event
 
-        execution = await self._execute_auto_buy(strategy_id, rule)
+        execution = await self.auto_buy.on_strategy_signal(strategy_id, rule)
         payload["execution"] = execution
-        return self._format_sse_event("strategy_signal", payload)
-
-    async def _execute_auto_buy(self, strategy_id: str, rule: dict[str, Any]) -> dict[str, Any]:
-        if self._auto_buy_is_ordering:
-            return {
-                "success": False,
-                "orders": [],
-                "error": "下单中",
-                "source": "task_auto_buy",
-                "strategy_id": strategy_id,
-            }
-
-        self._auto_buy_is_ordering = True
-        await self._publish_auto_buy_state()
-
-        cfg = await self._get_auto_buy_config_snapshot()
-        default_cfg = cfg.get("default", {})
-
-        side = str(rule.get("side", self.BOTH_SIDE))
-        amount = float(rule.get("amount", default_cfg.get("amount", 10.0)))
-        round_size = bool(rule.get("round_size", default_cfg.get("round_size", False)))
-        order_type = str(rule.get("order_type", default_cfg.get("order_type", "GTC")))
-        private_key = self.config.private_key
-        proxy_address = self.config.proxy_address
-
-        outcomes = self._resolve_target_outcomes(side)
-        orders: list[dict[str, Any]] = []
-        error_messages: list[str] = []
-
-        try:
-            if amount <= 0:
-                return {
-                    "success": False,
-                    "orders": [],
-                    "error": "amount 必须大于 0",
-                    "source": "task_auto_buy",
-                    "strategy_id": strategy_id,
-                }
-            if not private_key:
-                return {
-                    "success": False,
-                    "orders": [],
-                    "error": "private_key 不能为空",
-                    "source": "task_auto_buy",
-                    "strategy_id": strategy_id,
-                }
-
-            for outcome in outcomes:
-                token_id = self._token_by_outcome.get(outcome)
-                if not token_id:
-                    continue
-
-                best_ask = self._best_ask_by_token.get(token_id)
-                if best_ask is None or best_ask <= 0 or best_ask >= 1:
-                    continue
-
-                size = self._calculate_size(amount, best_ask, round_size)
-                if size <= 0:
-                    continue
-
-                order_info = {
-                    "token_id": token_id,
-                    "side": "BUY",
-                    "price": best_ask,
-                    "size": size,
-                    "order_type": order_type,
-                    "outcome": outcome,
-                }
-
-                try:
-                    result = await create_polymarket_order(
-                        token_id=token_id,
-                        side="BUY",
-                        price=best_ask,
-                        size=size,
-                        order_type=order_type,
-                        private_key=private_key,
-                        proxy_address=proxy_address,
-                    )
-                    orders.append({**order_info, "status": "SUBMITTED", "result": result})
-                    logger.info(
-                        "自动买入成功 task={} strategy={} outcome={} price={} size={}",
-                        self.task_id, strategy_id, outcome, best_ask, size,
-                    )
-                    self._record_auto_buy_stat(outcome, amount)
-                except Exception as exc:
-                    logger.error("自动买入失败 task={} strategy={} outcome={}: {}", self.task_id, strategy_id, outcome, exc)
-                    message = str(exc)
-                    error_messages.append(message)
-                    orders.append({**order_info, "status": "FAILED", "error": message})
-
-            success = bool(orders) and all(order.get("status") != "FAILED" for order in orders)
-            if success:
-                self._auto_buy_last_order_time = self._now_iso()
-
-            return {
-                "success": success,
-                "orders": orders,
-                "error": "; ".join(error_messages) if error_messages else None,
-                "source": "task_auto_buy",
-                "strategy_id": strategy_id,
-            }
-        finally:
-            self._auto_buy_is_ordering = False
-            await self._publish_auto_buy_state()
-
-    async def _get_auto_buy_config_snapshot(self) -> dict[str, Any]:
-        async with self._config_lock:
-            auto_buy = self.config.auto_buy if isinstance(self.config.auto_buy, dict) else {}
-            return copy.deepcopy(auto_buy)
-
-    def _resolve_target_outcomes(self, side: str) -> list[str]:
-        if side == self.BOTH_SIDE:
-            return list(self._token_by_outcome.keys())
-        if side in self._token_by_outcome:
-            return [side]
-        return []
-
-    def _update_token_mapping(self, payload: dict[str, Any]) -> None:
-        tokens = payload.get("tokens")
-        if not isinstance(tokens, list):
-            return
-
-        mapping: dict[str, str] = {}
-        reverse: dict[str, str] = {}
-
-        for token in tokens:
-            if not isinstance(token, dict):
-                continue
-            outcome = str(token.get("outcome") or "").strip()
-            token_id = str(token.get("token_id") or "").strip()
-            if not outcome or not token_id:
-                continue
-            mapping[outcome] = token_id
-            reverse[token_id] = outcome
-
-        if mapping:
-            self._token_by_outcome = mapping
-            self._outcome_by_token = reverse
-            self._market_outcomes = list(mapping.keys())
-            condition_id = payload.get("condition_id")
-            if isinstance(condition_id, str) and condition_id:
-                self._market_condition_id = condition_id
-
-            market_info = payload.get("market_info")
-            if isinstance(market_info, dict):
-                nested_condition_id = market_info.get("condition_id")
-                if isinstance(nested_condition_id, str) and nested_condition_id:
-                    self._market_condition_id = nested_condition_id
-                raw_outcomes = market_info.get("outcomes")
-                if isinstance(raw_outcomes, list):
-                    normalized_outcomes = [
-                        str(outcome).strip()
-                        for outcome in raw_outcomes
-                        if str(outcome).strip()
-                    ]
-                    if normalized_outcomes:
-                        self._market_outcomes = normalized_outcomes
-
-    def _update_best_prices(self, payload: dict[str, Any]) -> None:
-        price_changes = payload.get("price_changes")
-        if isinstance(price_changes, list) and price_changes:
-            for change in price_changes:
-                if not isinstance(change, dict):
-                    continue
-                asset_id = change.get("asset_id")
-                if not isinstance(asset_id, str) or not asset_id:
-                    continue
-                best_bid = change.get("best_bid")
-                best_ask = change.get("best_ask")
-                try:
-                    bid_value = float(best_bid) if best_bid is not None else None
-                except (TypeError, ValueError):
-                    bid_value = None
-                try:
-                    ask_value = float(best_ask) if best_ask is not None else None
-                except (TypeError, ValueError):
-                    ask_value = None
-
-                if bid_value is not None and 0 < bid_value < 1:
-                    self._best_bid_by_token[asset_id] = bid_value
-                if ask_value is not None and 0 < ask_value < 1:
-                    self._best_ask_by_token[asset_id] = ask_value
-            return
-
-        asset_id = payload.get("asset_id") or payload.get("assetId") or payload.get("token_id") or payload.get("tokenId")
-        if not isinstance(asset_id, str) or not asset_id:
-            return
-
-        bids = payload.get("bids") or payload.get("buys") or []
-        asks = payload.get("asks") or payload.get("sells") or []
-
-        if isinstance(bids, list) and bids:
-            best_bid = self._extract_best_bid(bids)
-            if best_bid is not None:
-                self._best_bid_by_token[asset_id] = best_bid
-
-        if isinstance(asks, list) and asks:
-            best_ask = self._extract_best_ask(asks)
-            if best_ask is not None:
-                self._best_ask_by_token[asset_id] = best_ask
+        return format_sse_event("strategy_signal", payload)
 
     @staticmethod
-    def _extract_best_bid(bids: list[Any]) -> Optional[float]:
-        values: list[float] = []
-        for bid in bids:
-            price: Optional[float] = None
-            if isinstance(bid, dict):
-                raw = bid.get("price")
-                if raw is not None:
-                    try:
-                        price = float(raw)
-                    except (TypeError, ValueError):
-                        price = None
-            elif isinstance(bid, (list, tuple)) and len(bid) >= 1:
-                try:
-                    price = float(bid[0])
-                except (TypeError, ValueError):
-                    price = None
-
-            if price is None:
-                continue
-            if 0 < price < 1:
-                values.append(price)
-
-        if not values:
-            return None
-        return max(values)
-
-    @staticmethod
-    def _extract_best_ask(asks: list[Any]) -> Optional[float]:
-        values: list[float] = []
-        for ask in asks:
-            price: Optional[float] = None
-            if isinstance(ask, dict):
-                raw = ask.get("price")
-                if raw is not None:
-                    try:
-                        price = float(raw)
-                    except (TypeError, ValueError):
-                        price = None
-            elif isinstance(ask, (list, tuple)) and len(ask) >= 1:
-                try:
-                    price = float(ask[0])
-                except (TypeError, ValueError):
-                    price = None
-
-            if price is None:
-                continue
-            if 0 < price < 1:
-                values.append(price)
-
-        if not values:
-            return None
-        return min(values)
-
-    @staticmethod
-    def _calculate_size(amount: float, price: float, round_size: bool) -> float:
-        if price <= 0 or price >= 1:
-            return 0.0
-
-        raw_size = amount / price
-        if round_size:
-            return float(int(raw_size))
-        return float(int(raw_size * 100) / 100)
-
-    def _record_auto_buy_stat(self, outcome: str, amount: float) -> None:
-        if outcome not in self._auto_buy_stats:
-            self._auto_buy_stats[outcome] = {"count": 0, "amount": 0.0}
-        self._auto_buy_stats[outcome]["count"] += 1
-        self._auto_buy_stats[outcome]["amount"] += amount
-
-    async def _publish_auto_buy_state(self) -> None:
-        cfg = await self._get_auto_buy_config_snapshot()
-        payload = {
-            "enabled": bool(cfg.get("enabled", False)),
-            "is_ordering": self._auto_buy_is_ordering,
-            "last_order_time": self._auto_buy_last_order_time,
-            "stats": self._auto_buy_stats,
-            "default": cfg.get("default", {}),
-            "strategy_rules": cfg.get("strategy_rules", {}),
-            "timestamp": self._now_iso(),
-        }
-        await self._publish_event(f"event: auto_buy_state\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n")
-
-    async def _get_auto_trade_config_snapshot(self) -> dict[str, Any]:
-        async with self._config_lock:
-            auto_trade = self.config.auto_trade if isinstance(self.config.auto_trade, dict) else {}
-            return copy.deepcopy(auto_trade)
-
-    async def _publish_auto_trade_state(self) -> None:
-        cfg = await self._get_auto_trade_config_snapshot()
-        payload = {
-            "enabled": bool(cfg.get("enabled", False)),
-            "version": int(cfg.get("version", 1)),
-            "config_version": int(cfg.get("config_version", 0)),
-            "defaults": cfg.get("defaults", {}),
-            "rules": cfg.get("rules", []),
-            "runtime": self._rule_engine.get_runtime_snapshot(),
-            "timestamp": self._now_iso(),
-        }
-        await self._publish_event(
-            f"event: auto_trade_state\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-        )
-
-    async def _auto_trade_tick_loop(self) -> None:
-        while not self._cancelled:
-            await self._execute_intents(self._rule_engine.on_tick())
-            await asyncio.sleep(1.0)
-
-    async def _execute_intents(self, intents: list[OrderIntent]) -> None:
-        if not intents:
-            return
-
-        if not self.config.private_key:
-            await self._publish_auto_trade_execution(
-                success=False,
-                orders=[],
-                error="private_key 不能为空",
-            )
-            return
-
-        cfg = await self._get_auto_trade_config_snapshot()
-        defaults = cfg.get("defaults") if isinstance(cfg.get("defaults"), dict) else {}
-        min_order_amount = float(defaults.get("min_order_amount", 1.0))
-        default_order_type = str(defaults.get("order_type", "GTC"))
-
-        success_count = 0
-        orders: list[dict[str, Any]] = []
-        errors: list[str] = []
-
-        for intent in intents:
-            ok, reason = self._rule_engine.risk_gate.check_basic(
-                intent,
-                min_order_amount=min_order_amount,
-            )
-            if not ok:
-                message = reason or "风控拒绝"
-                errors.append(f"{intent.rule_id}: {message}")
-                orders.append({
-                    "rule_id": intent.rule_id,
-                    "rule_type": intent.rule_type,
-                    "outcome": intent.outcome,
-                    "token_id": intent.token_id,
-                    "side": intent.side,
-                    "price": intent.price,
-                    "size": intent.size,
-                    "status": "REJECTED",
-                    "error": message,
-                })
-                continue
-
-            time_bucket = int(time.time() // 3)
-            dedupe_key = (
-                f"{self.task_id}:{intent.rule_id}:{intent.token_id}:{intent.side}:"
-                f"{round(intent.price, 3)}:{time_bucket}"
-            )
-            if not self._rule_engine.risk_gate.allow(dedupe_key=dedupe_key, dedupe_ttl_sec=3.0):
-                orders.append({
-                    "rule_id": intent.rule_id,
-                    "rule_type": intent.rule_type,
-                    "outcome": intent.outcome,
-                    "token_id": intent.token_id,
-                    "side": intent.side,
-                    "price": intent.price,
-                    "size": intent.size,
-                    "status": "SKIPPED",
-                    "error": "重复触发已忽略",
-                })
-                continue
-
-            order_type = str(intent.metadata.get("order_type", default_order_type))
-            try:
-                result = await create_polymarket_order(
-                    token_id=intent.token_id,
-                    side=intent.side,
-                    price=float(intent.price),
-                    size=float(intent.size),
-                    order_type=order_type,
-                    private_key=self.config.private_key,
-                    proxy_address=self.config.proxy_address,
-                )
-                success_count += 1
-                self._rule_engine.mark_executed(intent)
-                orders.append({
-                    "rule_id": intent.rule_id,
-                    "rule_type": intent.rule_type,
-                    "outcome": intent.outcome,
-                    "token_id": intent.token_id,
-                    "side": intent.side,
-                    "price": intent.price,
-                    "size": intent.size,
-                    "status": "SUBMITTED",
-                    "result": result,
-                    "metadata": intent.metadata,
-                })
-            except Exception as exc:
-                message = str(exc)
-                errors.append(f"{intent.rule_id}: {message}")
-                orders.append({
-                    "rule_id": intent.rule_id,
-                    "rule_type": intent.rule_type,
-                    "outcome": intent.outcome,
-                    "token_id": intent.token_id,
-                    "side": intent.side,
-                    "price": intent.price,
-                    "size": intent.size,
-                    "status": "FAILED",
-                    "error": message,
-                    "metadata": intent.metadata,
-                })
-
-        success = success_count > 0 and all(item.get("status") != "FAILED" for item in orders)
-        await self._publish_auto_trade_execution(
-            success=success,
-            orders=orders,
-            error="; ".join(errors) if errors else None,
-        )
-        await self._publish_auto_trade_state()
-
-    async def _publish_auto_trade_execution(
-        self,
-        success: bool,
-        orders: list[dict[str, Any]],
-        error: Optional[str] = None,
-    ) -> None:
-        payload = {
-            "success": success,
-            "orders": orders,
-            "error": error,
-            "source": "auto_trade_engine",
-            "timestamp": self._now_iso(),
-        }
-        await self._publish_event(
-            f"event: auto_trade_execution\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-        )
-
-    async def _get_auto_sell_config_snapshot(self) -> dict[str, Any]:
-        async with self._config_lock:
-            auto_sell = self.config.auto_sell if isinstance(self.config.auto_sell, dict) else {}
-            return copy.deepcopy(auto_sell)
-
-    async def _publish_auto_sell_state(self) -> None:
-        cfg = await self._get_auto_sell_config_snapshot()
-        payload = {
-            "enabled": bool(cfg.get("enabled", False)),
-            "is_ordering": self._auto_sell_is_ordering,
-            "last_order_time": self._auto_sell_last_order_time,
-            "last_sell_time": self._auto_sell_last_sell_time,
-            "stats": self._auto_sell_stats,
-            "default": cfg.get("default", {}),
-            "outcome_rules": cfg.get("outcome_rules", {}),
-            "timestamp": self._now_iso(),
-        }
-        await self._publish_event(f"event: auto_sell_state\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n")
-
-    async def _publish_auto_sell_execution(
-        self,
-        success: bool,
-        orders: list[dict[str, Any]],
-        error: Optional[str] = None,
-    ) -> None:
-        payload = {
-            "success": success,
-            "orders": orders,
-            "error": error,
-            "source": "task_auto_sell",
-            "timestamp": self._now_iso(),
-        }
-        await self._publish_event(f"event: auto_sell_execution\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n")
-
-    async def _publish_position_state(self) -> None:
-        payload = {
-            "sides": self._position_sides,
-            "loading": self._positions_loading,
-            "updated_at": self._positions_updated_at,
-            "condition_id": self._market_condition_id,
-            "timestamp": self._now_iso(),
-        }
-        await self._publish_event(f"event: position_state\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n")
-
-    async def _position_refresh_loop(self) -> None:
-        while not self._cancelled:
-            cfg = await self._get_auto_sell_config_snapshot()
-            default_cfg = cfg.get("default", {}) if isinstance(cfg.get("default"), dict) else {}
-            refresh_interval = float(default_cfg.get("refresh_interval", 3.0))
-            refresh_interval = max(1.0, min(refresh_interval, 60.0))
-            should_refresh = bool(
-                cfg.get("enabled", False)
-                and self._market_condition_id
-                and self.config.proxy_address
-            )
-
-            if should_refresh:
-                await self.refresh_positions_once()
-
-            await asyncio.sleep(refresh_interval)
-
-    async def refresh_positions_once(self, force: bool = False) -> None:
-        if not force and not self._should_refresh_positions_now():
-            return
-
-        if self._position_refresh_lock.locked():
-            return
-
-        async with self._position_refresh_lock:
-            self._last_position_refresh_at = time.monotonic()
-            await self._refresh_positions()
-
-    def _should_refresh_positions_now(self) -> bool:
-        interval = self._get_position_refresh_interval()
-        min_gap = max(0.8, min(interval * 0.6, 5.0))
-        return (time.monotonic() - self._last_position_refresh_at) >= min_gap
-
-    def _get_position_refresh_interval(self) -> float:
-        auto_sell = self.config.auto_sell if isinstance(self.config.auto_sell, dict) else {}
-        default_cfg = auto_sell.get("default") if isinstance(auto_sell.get("default"), dict) else {}
-        refresh_interval = float(default_cfg.get("refresh_interval", 3.0))
-        return max(1.0, min(refresh_interval, 60.0))
-
-    async def _refresh_positions(self) -> None:
-        if not self._market_condition_id:
-            return
-        if not self.config.proxy_address:
-            return
-
-        self._positions_loading = True
-        await self._publish_position_state()
-
-        try:
-            positions = await get_current_positions(
-                user_address=self.config.proxy_address,
-                condition_ids=[self._market_condition_id],
-                proxy_address=self.config.proxy_address,
-            )
-            if not isinstance(positions, list):
-                return
-
-            sides = self._build_position_sides(positions, self._market_outcomes)
-            self._position_sides = sides
-            self._positions_updated_at = self._now_iso()
-        except Exception as exc:
-            logger.error("刷新持仓失败 task={}: {}", self.task_id, exc)
-        finally:
-            self._positions_loading = False
-            await self._publish_position_state()
-
-    async def _maybe_execute_auto_sell(self) -> None:
-        cfg = await self._get_auto_sell_config_snapshot()
-        if not cfg.get("enabled", False):
-            return
-        if self._auto_sell_is_ordering:
-            return
-        if not self.config.private_key or not self.config.proxy_address:
-            return
-
-        default_cfg = cfg.get("default", {}) if isinstance(cfg.get("default"), dict) else {}
-        max_stale_seconds = float(default_cfg.get("max_stale_seconds", 7.0))
-        if self._positions_updated_at is None or self._is_stale(max_stale_seconds):
-            await self.refresh_positions_once()
-            if self._positions_updated_at is None or self._is_stale(max_stale_seconds):
-                return
-
-        outcome_rules = cfg.get("outcome_rules", {}) if isinstance(cfg.get("outcome_rules"), dict) else {}
-        candidates: list[dict[str, Any]] = []
-        for side in self._position_sides:
-            outcome = str(side.get("outcome") or "").strip()
-            if not outcome:
-                continue
-
-            rule = outcome_rules.get(outcome, {})
-            if not isinstance(rule, dict) or not rule.get("enabled", False):
-                continue
-
-            size = float(side.get("size", 0) or 0)
-            avg_price = side.get("avg_price")
-            avg = float(avg_price) if avg_price is not None else 0.0
-            if size <= 0 or avg <= 0:
-                continue
-
-            token_id = self._token_by_outcome.get(outcome)
-            if not token_id:
-                continue
-            best_bid = self._best_bid_by_token.get(token_id)
-            if best_bid is None or best_bid <= 0 or best_bid >= 1:
-                continue
-
-            profit_rate = self._calculate_profit_rate(avg, best_bid)
-            min_profit_rate = float(rule.get("min_profit_rate", default_cfg.get("min_profit_rate", 5.0)))
-            if profit_rate < (min_profit_rate / 100.0):
-                continue
-
-            cooldown_time = float(rule.get("cooldown_time", default_cfg.get("cooldown_time", 30.0)))
-            last_sell_iso = self._auto_sell_last_sell_time.get(outcome)
-            if last_sell_iso and self._seconds_since_iso(last_sell_iso) < cooldown_time:
-                continue
-
-            sell_ratio = float(rule.get("sell_ratio", default_cfg.get("sell_ratio", 100.0)))
-            sell_size = float(int(size * (sell_ratio / 100.0) * 100) / 100.0)
-            if sell_size <= 0:
-                continue
-
-            order_type = str(rule.get("order_type", default_cfg.get("order_type", "GTC")))
-            candidates.append({
-                "outcome": outcome,
-                "token_id": token_id,
-                "price": best_bid,
-                "size": sell_size,
-                "order_type": order_type,
-                "profit_rate": profit_rate,
-            })
-
-        if not candidates:
-            return
-
-        self._auto_sell_is_ordering = True
-        await self._publish_auto_sell_state()
-
-        success_count = 0
-        orders: list[dict[str, Any]] = []
-        error_messages: list[str] = []
-        try:
-            for order in candidates:
-                outcome = order["outcome"]
-                now = self._now_iso()
-                previous = self._auto_sell_last_sell_time.get(outcome)
-                self._auto_sell_last_sell_time[outcome] = now
-
-                try:
-                    await create_polymarket_order(
-                        token_id=order["token_id"],
-                        side="SELL",
-                        price=float(order["price"]),
-                        size=float(order["size"]),
-                        order_type=str(order["order_type"]),
-                        private_key=self.config.private_key,
-                        proxy_address=self.config.proxy_address,
-                    )
-                    orders.append({
-                        **order,
-                        "side": "SELL",
-                        "status": "SUBMITTED",
-                    })
-                    logger.info(
-                        "自动卖出成功 task={} outcome={} price={} size={} profit_rate={:.2%}",
-                        self.task_id, outcome, order["price"], order["size"], order["profit_rate"],
-                    )
-                    self._record_auto_sell_stat(outcome, float(order["size"]) * float(order["price"]))
-                    success_count += 1
-                except Exception as exc:
-                    logger.error("自动卖出失败 task={} outcome={}: {}", self.task_id, outcome, exc)
-                    message = str(exc)
-                    error_messages.append(message)
-                    orders.append({
-                        **order,
-                        "side": "SELL",
-                        "status": "FAILED",
-                        "error": message,
-                    })
-                    if previous:
-                        self._auto_sell_last_sell_time[outcome] = previous
-                    else:
-                        self._auto_sell_last_sell_time.pop(outcome, None)
-
-            success = success_count > 0 and all(item.get("status") != "FAILED" for item in orders)
-            await self._publish_auto_sell_execution(
-                success=success,
-                orders=orders,
-                error="; ".join(error_messages) if error_messages else None,
-            )
-            if success_count > 0:
-                self._auto_sell_last_order_time = self._now_iso()
-                await asyncio.sleep(2.0)
-                await self.refresh_positions_once()
-        finally:
-            self._auto_sell_is_ordering = False
-            await self._publish_auto_sell_state()
-
-    @staticmethod
-    def _build_position_sides(positions: list[dict[str, Any]], outcomes: list[str] | None) -> list[dict[str, Any]]:
-        sizes: dict[str, float] = {}
-        initial_values: dict[str, float] = {}
-        avg_prices: dict[str, float | None] = {}
-        cur_prices: dict[str, float | None] = {}
-
-        for position in positions:
-            outcome = str(position.get("outcome") or "").strip()
-            if outcome:
-                size_value = position.get("size", 0)
-                try:
-                    size = float(size_value)
-                except (TypeError, ValueError):
-                    size = 0.0
-                sizes[outcome] = sizes.get(outcome, 0.0) + size
-
-                initial_value = position.get("initialValue", 0)
-                try:
-                    cost = float(initial_value)
-                except (TypeError, ValueError):
-                    cost = 0.0
-                initial_values[outcome] = initial_values.get(outcome, 0.0) + cost
-
-                if outcome not in avg_prices:
-                    avg_value = position.get("avgPrice")
-                    if avg_value is not None:
-                        try:
-                            avg_prices[outcome] = float(avg_value)
-                        except (TypeError, ValueError):
-                            avg_prices[outcome] = None
-
-                if outcome not in cur_prices:
-                    cur_value = position.get("curPrice")
-                    if cur_value is not None:
-                        try:
-                            cur_prices[outcome] = float(cur_value)
-                        except (TypeError, ValueError):
-                            cur_prices[outcome] = None
-
-            opposite_outcome = str(position.get("oppositeOutcome") or "").strip()
-            if opposite_outcome and opposite_outcome not in sizes:
-                sizes[opposite_outcome] = 0.0
-                initial_values[opposite_outcome] = 0.0
-
-        if outcomes:
-            for outcome in outcomes:
-                if outcome not in sizes:
-                    sizes[outcome] = 0.0
-                if outcome not in initial_values:
-                    initial_values[outcome] = 0.0
-
-        ordered_outcomes = outcomes or list(sizes.keys())
-        return [
-            {
-                "outcome": outcome,
-                "size": sizes.get(outcome, 0.0),
-                "initial_value": initial_values.get(outcome, 0.0),
-                "avg_price": avg_prices.get(outcome),
-                "cur_price": cur_prices.get(outcome),
-            }
-            for outcome in ordered_outcomes
-        ]
-
-    @staticmethod
-    def _calculate_profit_rate(avg_price: float, current_price: float) -> float:
-        if avg_price <= 0:
-            return -1.0
-        return (current_price - avg_price) / avg_price
-
-    def _record_auto_sell_stat(self, outcome: str, amount: float) -> None:
-        if outcome not in self._auto_sell_stats:
-            self._auto_sell_stats[outcome] = {"count": 0, "amount": 0.0}
-        self._auto_sell_stats[outcome]["count"] += 1
-        self._auto_sell_stats[outcome]["amount"] += amount
-
-    async def _get_strategy_position_context(
-        self,
-        yes_token_id: str,
-        no_token_id: str,
-        max_stale_seconds: float,
-    ) -> Optional[PositionContext]:
-        if not yes_token_id or not no_token_id:
-            return None
-
-        stale_limit = max(1.0, float(max_stale_seconds))
-        if self._positions_updated_at is None or self._is_stale(stale_limit):
-            await self.refresh_positions_once()
-
-        yes_outcome = self._outcome_by_token.get(yes_token_id)
-        no_outcome = self._outcome_by_token.get(no_token_id)
-        if not yes_outcome or not no_outcome:
-            return PositionContext()
-
-        yes_side = self._find_position_side(yes_outcome)
-        no_side = self._find_position_side(no_outcome)
-
-        yes_size = float(yes_side.get("size", 0.0)) if yes_side else 0.0
-        no_size = float(no_side.get("size", 0.0)) if no_side else 0.0
-        yes_avg = float(yes_side.get("avg_price", 0.0) or 0.0) if yes_side else 0.0
-        no_avg = float(no_side.get("avg_price", 0.0) or 0.0) if no_side else 0.0
-
-        yes_initial = float(yes_side.get("initial_value", 0.0) or 0.0) if yes_side else 0.0
-        no_initial = float(no_side.get("initial_value", 0.0) or 0.0) if no_side else 0.0
-
-        yes_total_cost = yes_initial if yes_initial > 0 else yes_size * yes_avg
-        no_total_cost = no_initial if no_initial > 0 else no_size * no_avg
-
-        return PositionContext(
-            yes_size=yes_size,
-            no_size=no_size,
-            yes_avg_cost=yes_avg,
-            no_avg_cost=no_avg,
-            yes_total_cost=yes_total_cost,
-            no_total_cost=no_total_cost,
-        )
-
-    def _find_position_side(self, outcome: str) -> Optional[dict[str, Any]]:
-        for side in self._position_sides:
-            if str(side.get("outcome") or "") == outcome:
-                return side
-        return None
-
-    def _is_stale(self, max_stale_seconds: float) -> bool:
-        if not self._positions_updated_at:
-            return True
-        return self._seconds_since_iso(self._positions_updated_at) > max_stale_seconds
-
-    @staticmethod
-    def _seconds_since_iso(value: str) -> float:
-        try:
-            ts = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            now = datetime.now(ts.tzinfo)
-            return max(0.0, (now - ts).total_seconds())
-        except Exception:
-            return 10 ** 9
-
-    def _extract_game_info(self, event: str, status: TaskStatus) -> bool:
+    def _extract_game_info(event: str, status: TaskStatus) -> bool:
         """从 scoreboard 事件提取比赛信息"""
         try:
-            # 解析 SSE 事件
             lines = event.strip().split("\n")
             data_line = None
             for line in lines:
@@ -1429,87 +293,3 @@ class GameTask:
             return False
 
         return False
-
-    async def _publish_event(self, event: str) -> None:
-        """发布事件到 Redis"""
-        await self._cache_snapshot(event)
-        channel = Channels.task_events(self.task_id)
-        await self.redis.publish(channel, event)
-
-    async def _save_status(self, status: TaskStatus) -> None:
-        """保存任务状态到 Redis"""
-        key = Channels.task_status(self.task_id)
-        # 状态保留 24 小时
-        await self.redis.set(key, status.to_json(), ex=86400)
-
-    async def _load_or_create_status(self) -> TaskStatus:
-        """加载已有状态，避免覆盖 created_at/user_id 等字段"""
-        key = Channels.task_status(self.task_id)
-        data = await self.redis.get(key)
-        if not data:
-            return TaskStatus.create(self.task_id)
-        try:
-            return TaskStatus.from_json(data)
-        except Exception:
-            return TaskStatus.create(self.task_id)
-
-    async def _publish_status(self, status: TaskStatus) -> None:
-        """发布任务状态事件"""
-        payload = json.dumps(status.to_dict(), ensure_ascii=False)
-        await self._publish_event(f"event: task_status\ndata: {payload}\n\n")
-
-    async def _cache_snapshot(self, event: str) -> None:
-        """缓存可回放事件"""
-        event_type = None
-        for line in event.splitlines():
-            if line.startswith("event:"):
-                event_type = line[6:].strip()
-
-        if not event_type or event_type not in self.SNAPSHOT_EVENTS:
-            return
-
-        snapshot_key = Channels.task_snapshot(self.task_id, event_type)
-        await self.redis.set(snapshot_key, event, ex=86400)
-
-    @staticmethod
-    def _parse_sse_event(event: str) -> tuple[Optional[str], Optional[dict[str, Any]]]:
-        event_type: Optional[str] = None
-        data_payload: Optional[str] = None
-
-        for line in event.splitlines():
-            if line.startswith("event:"):
-                event_type = line[6:].strip()
-            elif line.startswith("data:") and data_payload is None:
-                data_payload = line[5:].strip()
-
-        if not event_type or not data_payload:
-            return None, None
-
-        try:
-            parsed = json.loads(data_payload)
-        except Exception:
-            return event_type, None
-
-        if not isinstance(parsed, dict):
-            return event_type, None
-
-        return event_type, parsed
-
-    @staticmethod
-    def _format_sse_event(event_type: str, payload: dict[str, Any]) -> str:
-        return f"event: {event_type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-
-    @staticmethod
-    def _deep_merge_dict(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
-        merged = dict(base)
-        for key, value in patch.items():
-            current = merged.get(key)
-            if isinstance(current, dict) and isinstance(value, dict):
-                merged[key] = GameTask._deep_merge_dict(current, value)
-            else:
-                merged[key] = value
-        return merged
-
-    @staticmethod
-    def _now_iso() -> str:
-        return datetime.utcnow().isoformat() + "Z"
