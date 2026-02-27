@@ -28,7 +28,6 @@ class RedisClient:
             max_connections=50,
         )
         self._client = redis.Redis(connection_pool=self._pool)
-        # 测试连接
         await self._client.ping()
         logger.info("Redis 已连接: {}", self._url.split("@")[-1])
 
@@ -131,11 +130,9 @@ class RedisClient:
         stream: str,
         fields: dict[str, str],
         maxlen: int | None = None,
-        *,
-        approximate: bool = True,
     ) -> str:
         """追加消息到 Stream"""
-        return await self.client.xadd(stream, fields, maxlen=maxlen, approximate=approximate)
+        return await self.client.xadd(stream, fields, maxlen=maxlen)
 
     async def xread(
         self,
@@ -170,9 +167,9 @@ class RedisClient:
         """获取 Stream 长度"""
         return await self.client.xlen(stream)
 
-    async def xtrim(self, stream: str, maxlen: int, *, approximate: bool = True) -> int:
+    async def xtrim(self, stream: str, maxlen: int) -> int:
         """裁剪 Stream"""
-        return await self.client.xtrim(stream, maxlen=maxlen, approximate=approximate)
+        return await self.client.xtrim(stream, maxlen=maxlen)
 
     async def xdel(self, stream: str, *ids: str) -> int:
         """删除 Stream 中的消息"""

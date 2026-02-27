@@ -2,62 +2,48 @@
 
 import asyncio
 import json
-import os
-from typing import Any, Optional, Union
+from typing import Optional
 
 from loguru import logger
 
-from pm_nba_agent.api.services.data_fetcher import DataFetcher
-from pm_nba_agent.agent import GameAnalyzer
-from pm_nba_agent.shared import Channels, RedisClient, TaskConfig, TaskState, TaskStatus
-from pm_nba_agent.worker.game_task import GameTask
-from pm_nba_agent.worker.robot_task import RobotTask
-
-# TASK_MODE 环境变量：robot（默认）= RobotTask，legacy = GameTask
-TASK_MODE = os.getenv("TASK_MODE", "robot").lower()
+from {package_name}.shared import Channels, RedisClient, TaskConfig, TaskState, TaskStatus
+from {package_name}.worker.robot_task import RobotTask
 
 
 class TaskManager:
-    """后台任务管理器（支持 legacy/robot 双模式）"""
+    """后台任务管理器。
 
-    def __init__(
-        self,
-        redis: RedisClient,
-        fetcher: DataFetcher,
-        analyzer: Optional[GameAnalyzer] = None,
-    ):
+    职责：
+    - 监听 Redis Pub/Sub 控制 Channel
+    - 任务 CRUD（创建、取消、查询）
+    - 崩溃恢复（扫描 Redis 中 PENDING/RUNNING 状态的任务）
+    - 配置热更新转发
+    """
+
+    def __init__(self, redis: RedisClient):
         self.redis = redis
-        self.fetcher = fetcher
-        self.analyzer = analyzer
-        self._tasks: dict[str, Union[GameTask, RobotTask]] = {}
+        self._tasks: dict[str, RobotTask] = {}
         self._running = False
-        self._task_mode = TASK_MODE
-        logger.info("TaskManager 模式: {}", self._task_mode)
 
     async def start(self) -> None:
-        """启动任务管理器"""
+        """启动任务管理器。"""
         self._running = True
         logger.info("TaskManager 已启动")
 
-        # 恢复未完成的任务
         await self._recover_tasks()
-
-        # 监听控制 Channel
         await self._listen_control()
 
     async def stop(self) -> None:
-        """停止任务管理器"""
+        """停止任务管理器。"""
         self._running = False
 
-        # 取消所有运行中的任务
         for task_id, task in list(self._tasks.items()):
             logger.info("正在取消任务: {}", task_id)
             task.cancel()
 
-        # 等待所有任务完成
         if self._tasks:
             await asyncio.gather(
-                *[t._task for t in self._tasks.values() if t._task],
+                *[task._task for task in self._tasks.values() if task._task],
                 return_exceptions=True,
             )
 
@@ -65,66 +51,33 @@ class TaskManager:
         logger.info("TaskManager 已停止")
 
     async def create_task(self, task_id: str, config: TaskConfig) -> bool:
-        """创建新任务"""
+        """创建并启动任务。"""
         if task_id in self._tasks:
             logger.warning("任务已存在: {}", task_id)
             return False
 
-        # 保存配置到 Redis
+        if not config.task_id or config.task_id != task_id:
+            config.task_id = task_id
+
         config_key = Channels.task_config(task_id)
         await self.redis.set(config_key, config.to_json(), ex=86400)
-
-        # 添加到任务集合
         await self.redis.sadd(Channels.all_tasks(), task_id)
+        if config.user_id:
+            await self.redis.sadd(Channels.user_tasks(config.user_id), task_id)
 
-        # 创建并启动任务
-        task = self._create_task_instance(task_id, config)
+        task = RobotTask(
+            task_id=task_id,
+            config=config,
+            redis=self.redis,
+        )
         self._tasks[task_id] = task
         task._task = asyncio.create_task(self._run_task(task_id, task))
 
-        logger.info("任务已创建 (mode={}): {}", self._task_mode, task_id)
+        logger.info("任务已创建: {}", task_id)
         return True
 
-    def _create_task_instance(
-        self, task_id: str, config: TaskConfig
-    ) -> Union[GameTask, RobotTask]:
-        """根据模式创建任务实例。"""
-        if self._task_mode == "robot":
-            # Robot 模式下导入所有 Bot 以触发注册
-            self._ensure_robots_registered()
-            return RobotTask(
-                task_id=task_id,
-                config=config,
-                redis=self.redis,
-            )
-        else:
-            return GameTask(
-                task_id=task_id,
-                config=config,
-                redis=self.redis,
-                fetcher=self.fetcher,
-                analyzer=self.analyzer,
-            )
-
-    def _ensure_robots_registered(self) -> None:
-        """确保所有 Robot 已注册（懒加载）。"""
-        from pm_nba_agent.robots.composer import ROBOT_REGISTRY
-        if ROBOT_REGISTRY:
-            return
-        # 导入所有 bot 模块以触发 @register_robot 装饰器
-        import pm_nba_agent.robots.data_bot  # noqa: F401
-        import pm_nba_agent.robots.book_bot  # noqa: F401
-        import pm_nba_agent.robots.position_bot  # noqa: F401
-        import pm_nba_agent.robots.merge_long_bot  # noqa: F401
-        import pm_nba_agent.robots.locked_profit_bot  # noqa: F401
-        import pm_nba_agent.robots.signal_buy_bot  # noqa: F401
-        import pm_nba_agent.robots.condition_buy_bot  # noqa: F401
-        import pm_nba_agent.robots.periodic_buy_bot  # noqa: F401
-        import pm_nba_agent.robots.profit_sell_bot  # noqa: F401
-        import pm_nba_agent.robots.analysis_bot  # noqa: F401
-
     async def cancel_task(self, task_id: str) -> bool:
-        """取消任务"""
+        """取消任务。"""
         task = self._tasks.get(task_id)
         if not task:
             logger.warning("任务不存在: {}", task_id)
@@ -134,8 +87,47 @@ class TaskManager:
         logger.info("任务取消请求已发送: {}", task_id)
         return True
 
+    async def delete_task(self, task_id: str) -> bool:
+        """删除任务（停止运行并清理 Redis 记录）。"""
+        task = self._tasks.get(task_id)
+        if task:
+            task.cancel()
+            if task._task:
+                await asyncio.gather(task._task, return_exceptions=True)
+
+        config_key = Channels.task_config(task_id)
+        status_key = Channels.task_status(task_id)
+        config_raw = await self.redis.get(config_key)
+        status_raw = await self.redis.get(status_key)
+
+        user_id = ""
+        if status_raw:
+            try:
+                user_id = TaskStatus.from_json(status_raw).user_id
+            except Exception:
+                user_id = ""
+        if not user_id and config_raw:
+            try:
+                user_id = TaskConfig.from_json(config_raw).user_id
+            except Exception:
+                user_id = ""
+
+        stream_keys = [Channels.task_stream(task_id, stream) for stream in Channels.ALL_STREAMS]
+        removed_key_count = await self.redis.delete(config_key, status_key, *stream_keys)
+        removed_task_count = await self.redis.srem(Channels.all_tasks(), task_id)
+        if user_id:
+            await self.redis.srem(Channels.user_tasks(user_id), task_id)
+
+        logger.info(
+            "任务已删除: task={} keys_removed={} task_set_removed={}",
+            task_id,
+            removed_key_count,
+            removed_task_count,
+        )
+        return bool(task or removed_key_count or removed_task_count)
+
     async def get_task_status(self, task_id: str) -> Optional[TaskStatus]:
-        """获取任务状态"""
+        """获取任务状态。"""
         key = Channels.task_status(task_id)
         data = await self.redis.get(key)
         if not data:
@@ -143,7 +135,7 @@ class TaskManager:
         return TaskStatus.from_json(data)
 
     async def list_tasks(self) -> list[TaskStatus]:
-        """列出所有任务"""
+        """列出所有任务。"""
         task_ids = await self.redis.smembers(Channels.all_tasks())
         statuses = []
 
@@ -154,8 +146,8 @@ class TaskManager:
 
         return statuses
 
-    async def _run_task(self, task_id: str, task: Union[GameTask, RobotTask]) -> None:
-        """运行任务并在完成后清理"""
+    async def _run_task(self, task_id: str, task: RobotTask) -> None:
+        """运行任务并在完成后清理。"""
         try:
             await task.run()
         finally:
@@ -163,7 +155,7 @@ class TaskManager:
             logger.info("任务已完成: {}", task_id)
 
     async def _recover_tasks(self) -> None:
-        """恢复未完成的任务"""
+        """恢复未完成任务（崩溃恢复）。"""
         task_ids = await self.redis.smembers(Channels.all_tasks())
 
         for task_id in task_ids:
@@ -171,11 +163,9 @@ class TaskManager:
             if not status:
                 continue
 
-            # 恢复未完成状态（包括取消中）
             if status.state not in (TaskState.PENDING, TaskState.RUNNING, TaskState.CANCELLING):
                 continue
 
-            # 获取配置
             config_key = Channels.task_config(task_id)
             config_data = await self.redis.get(config_key)
             if not config_data:
@@ -183,9 +173,11 @@ class TaskManager:
                 continue
 
             config = TaskConfig.from_json(config_data)
-
-            # 重新创建任务
-            task = self._create_task_instance(task_id, config)
+            task = RobotTask(
+                task_id=task_id,
+                config=config,
+                redis=self.redis,
+            )
             self._tasks[task_id] = task
             task._task = asyncio.create_task(self._run_task(task_id, task))
             if status.state == TaskState.CANCELLING:
@@ -194,22 +186,29 @@ class TaskManager:
             logger.info("任务已恢复: {}", task_id)
 
     async def _listen_control(self) -> None:
-        """监听控制 Channel"""
+        """监听控制 Channel。"""
         logger.info("开始监听控制 Channel: {}", Channels.CONTROL)
 
         try:
             async for message in self.redis.subscribe(Channels.CONTROL):
                 if not self._running:
                     break
-
                 await self._handle_control_message(message)
         except asyncio.CancelledError:
             pass
-        except Exception as e:
-            logger.error("控制 Channel 监听异常: {}", e)
+        except Exception as exc:
+            logger.error("控制 Channel 监听异常: {}", exc)
 
     async def _handle_control_message(self, message: dict) -> None:
-        """处理控制消息"""
+        """处理控制消息。
+
+        支持的 action:
+        - create: 创建新任务
+        - cancel: 取消任务
+        - delete: 删除任务
+        - update_config: 热更新任务配置
+        - shutdown: 关闭 Worker
+        """
         try:
             data = json.loads(message["data"])
             action = data.get("action")
@@ -217,7 +216,6 @@ class TaskManager:
 
             if action == "create" and task_id:
                 config_data = data.get("config", {})
-                # 从控制消息中传递 user_id 到配置
                 user_id = data.get("user_id", "")
                 if user_id and "user_id" not in config_data:
                     config_data["user_id"] = user_id
@@ -227,22 +225,17 @@ class TaskManager:
             elif action == "cancel" and task_id:
                 await self.cancel_task(task_id)
 
+            elif action == "delete" and task_id:
+                await self.delete_task(task_id)
+
             elif action == "update_config" and task_id:
                 patch = data.get("patch", {})
                 task = self._tasks.get(task_id)
                 if not task:
-                    logger.warning("任务未运行，配置已仅持久化: {}", task_id)
+                    logger.warning("任务未运行，无法更新配置: {}", task_id)
                     return
                 await task.update_config(patch)
                 logger.info("任务配置已更新: {}", task_id)
-
-            elif action == "refresh_positions" and task_id:
-                task = self._tasks.get(task_id)
-                if not task:
-                    logger.warning("任务未运行，无法刷新持仓: {}", task_id)
-                    return
-                await task.refresh_positions_once(force=True)
-                logger.info("任务持仓已刷新: {}", task_id)
 
             elif action == "shutdown":
                 logger.info("收到关闭指令")
@@ -251,5 +244,5 @@ class TaskManager:
             else:
                 logger.warning("未知控制消息: {}", data)
 
-        except Exception as e:
-            logger.error("处理控制消息失败: {}", e)
+        except Exception as exc:
+            logger.error("处理控制消息失败: {}", exc)

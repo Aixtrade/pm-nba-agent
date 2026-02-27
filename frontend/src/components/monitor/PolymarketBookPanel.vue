@@ -70,11 +70,13 @@ function formatTime(timestamp: string | null): string {
   if (!timestamp) return '-'
   const date = new Date(timestamp)
   if (Number.isNaN(date.getTime())) return timestamp
-  return date.toLocaleTimeString('zh-CN', {
+  const timePart = date.toLocaleTimeString('zh-CN', {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
   })
+  const msPart = String(date.getMilliseconds()).padStart(3, '0')
+  return `${timePart}.${msPart}`
 }
 
 function formatSize(value: number | null | undefined): string {

@@ -98,7 +98,14 @@ export function useSSE() {
       gameStore.setAutoTradeState(data)
     },
     onAutoTradeExecution: (data) => {
-      if (data?.source !== 'auto_trade_engine') return
+      const source = data?.source
+      const allowedSources = new Set([
+        'auto_trade_engine',
+        'signal_buy_bot',
+        'condition_buy_bot',
+        'periodic_buy_bot',
+      ])
+      if (typeof source === 'string' && !allowedSources.has(source)) return
       const orderCount = Array.isArray(data.orders) ? data.orders.length : 0
       if (data.success) {
         toastStore.showSuccess(`自动交易下单成功 (${orderCount} 笔)`)
@@ -110,7 +117,9 @@ export function useSSE() {
       gameStore.setAutoSellState(data)
     },
     onAutoSellExecution: (data) => {
-      if (data?.source !== 'task_auto_sell') return
+      const source = data?.source
+      const allowedSources = new Set(['task_auto_sell', 'profit_sell_bot'])
+      if (typeof source === 'string' && !allowedSources.has(source)) return
       const orderCount = Array.isArray(data.orders) ? data.orders.length : 0
       if (data.success) {
         toastStore.showSuccess(`自动卖出下单成功 (${orderCount} 笔)`)
@@ -120,6 +129,15 @@ export function useSSE() {
     },
     onPositionState: (data) => {
       gameStore.setPositionState(data)
+    },
+    onRobotStatus: (data) => {
+      gameStore.upsertRobotStatus(data)
+      if (data.state === 'error') {
+        const msg = typeof data.last_error === 'string' && data.last_error
+          ? data.last_error
+          : `${data.robot_type} 运行异常`
+        toastStore.showError(msg)
+      }
     },
     onTaskEnd: (data) => {
       taskStore.updateTaskState(data.task_id, data.state)

@@ -25,7 +25,9 @@
       "Bash(npm run build:*)",
       "Bash(pnpm type-check:*)",
       "Bash(pnpm add:*)",
-      "Bash(pnpm build:*)"
+      "Bash(pnpm build:*)",
+      "Bash(ls:*)",
+      "Bash(redis-cli XLEN:*)"
     ]
   }
 }

@@ -4,6 +4,7 @@
  */
 
 import type { GameData } from './index'
+import type { RobotStatusEventData } from './task'
 
 // Scoreboard 事件数据
 export interface ScoreboardEventData {
@@ -249,6 +250,7 @@ export type SSEEventType =
   | 'auto_sell_state'
   | 'auto_sell_execution'
   | 'position_state'
+  | 'robot_status'
 
 // SSE 事件处理器
 export interface SSEEventHandlers {
@@ -267,6 +269,7 @@ export interface SSEEventHandlers {
   onAutoSellState?: (data: AutoSellStateEventData) => void
   onAutoSellExecution?: (data: AutoSellExecutionEventData) => void
   onPositionState?: (data: PositionStateEventData) => void
+  onRobotStatus?: (data: RobotStatusEventData) => void
   onOpen?: () => void
   onClose?: () => void
 }

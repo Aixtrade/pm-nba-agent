@@ -13,6 +13,7 @@ import type {
   AutoSellStateEventData,
   PositionStateEventData,
 } from '@/types/sse'
+import type { RobotStatusEventData } from '@/types/task'
 
 interface BookLevel {
   price: number
@@ -36,6 +37,9 @@ type BookPayload = {
   event_type?: string
   price_changes?: Array<{
     asset_id?: string
+    assetId?: string
+    token_id?: string
+    tokenId?: string
     price?: string | number
     size?: string | number
     side?: string
@@ -96,6 +100,17 @@ function parseBookLevels(raw: unknown): BookLevel[] {
   return levels
 }
 
+function parseEventTimestamp(raw: unknown): string {
+  if (typeof raw === 'number' || typeof raw === 'string') {
+    const value = Number(raw)
+    if (!Number.isNaN(value) && value > 0) {
+      const ms = value >= 1e12 ? value : value * 1000
+      return new Date(ms).toISOString()
+    }
+  }
+  return new Date().toISOString()
+}
+
 function getBestBid(levels: BookLevel[]): BookLevel | null {
   if (levels.length === 0) return null
   return levels.reduce((best, level) => (level.price > best.price ? level : best))
@@ -122,6 +137,7 @@ export const useGameStore = defineStore('game', () => {
   const autoBuyState = ref<AutoBuyStateEventData | null>(null)
   const autoTradeState = ref<AutoTradeStateEventData | null>(null)
   const autoSellState = ref<AutoSellStateEventData | null>(null)
+  const robotStatuses = ref<Record<string, RobotStatusEventData>>({})
 
   // 向后兼容的 computed
   const latestStrategySignal = computed<StrategySignalEventData | null>(() => {
@@ -240,24 +256,30 @@ export const useGameStore = defineStore('game', () => {
     if (!payload) return
 
     if (Array.isArray(payload.price_changes)) {
-      const updatedAt = payload.timestamp
-        ? new Date(Number(payload.timestamp)).toISOString()
-        : new Date().toISOString()
+      const updatedAt = parseEventTimestamp(payload.timestamp)
 
       const updates: Record<string, BookPriceSnapshot> = {}
       for (const change of payload.price_changes) {
-        const assetId = change.asset_id
+        const assetId = change.asset_id || change.assetId || change.token_id || change.tokenId
         if (!assetId) continue
 
         const bestBid = change.best_bid !== undefined ? Number(change.best_bid) : null
         const bestAsk = change.best_ask !== undefined ? Number(change.best_ask) : null
+        const sizeValue = change.size !== undefined ? Number(change.size) : null
+        const normalizedSize = sizeValue !== null && !Number.isNaN(sizeValue) ? sizeValue : null
+        const side = typeof change.side === 'string' ? change.side.toUpperCase() : ''
+        const previous = polymarketBook.value[assetId]
+        const bidSize =
+          side === 'BUY' ? normalizedSize : (previous?.bidSize ?? null)
+        const askSize =
+          side === 'SELL' ? normalizedSize : (previous?.askSize ?? null)
 
         updates[assetId] = {
           assetId,
           bestBid: Number.isNaN(bestBid) ? null : bestBid,
           bestAsk: Number.isNaN(bestAsk) ? null : bestAsk,
-          bidSize: null,
-          askSize: null,
+          bidSize,
+          askSize,
           updatedAt,
         }
       }
@@ -287,9 +309,7 @@ export const useGameStore = defineStore('game', () => {
     const bestBid = getBestBid(bids)
     const bestAsk = getBestAsk(asks)
 
-    const updatedAt = payload.timestamp
-      ? new Date(Number(payload.timestamp)).toISOString()
-      : new Date().toISOString()
+    const updatedAt = parseEventTimestamp(payload.timestamp)
 
     const previous = polymarketBook.value[assetId]
 
@@ -369,6 +389,14 @@ export const useGameStore = defineStore('game', () => {
     positionsUpdatedAt.value = data.updated_at ?? data.timestamp ?? new Date().toISOString()
   }
 
+  function upsertRobotStatus(data: RobotStatusEventData) {
+    if (!data?.robot_type) return
+    robotStatuses.value = {
+      ...robotStatuses.value,
+      [data.robot_type]: data,
+    }
+  }
+
   function reset() {
     scoreboard.value = null
     boxscore.value = null
@@ -385,6 +413,7 @@ export const useGameStore = defineStore('game', () => {
     autoBuyState.value = null
     autoTradeState.value = null
     autoSellState.value = null
+    robotStatuses.value = {}
   }
 
   return {
@@ -409,6 +438,7 @@ export const useGameStore = defineStore('game', () => {
     autoBuyState,
     autoTradeState,
     autoSellState,
+    robotStatuses,
     // 计算属性
     gameId,
     gameStatus,
@@ -433,6 +463,7 @@ export const useGameStore = defineStore('game', () => {
     setAutoTradeState,
     setAutoSellState,
     setPositionState,
+    upsertRobotStatus,
     reset,
   }
 })

@@ -182,6 +182,9 @@ export class SSEService {
         case 'position_state':
           this.handlers.onPositionState?.(parsed)
           break
+        case 'robot_status':
+          this.handlers.onRobotStatus?.(parsed)
+          break
         default:
           console.warn('Unknown event type:', eventType)
       }
@@ -221,7 +224,7 @@ export class SSEService {
     this.abortController = new AbortController()
     this.notifyStateChange()
 
-    const url = `${API_BASE_URL}/api/v1/live/subscribe/${this.currentTaskId}`
+    const url = `${API_BASE_URL}/api/v2/live/subscribe/${this.currentTaskId}?history=0`
 
     const headers: Record<string, string> = {
       Accept: 'text/event-stream',

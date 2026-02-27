@@ -138,3 +138,31 @@ export interface AutoTradeConfig {
   defaults?: Record<string, unknown>
   rules?: AutoTradeRule[]
 }
+
+// Robot 状态（v2 Robot 系统）
+export type RobotState = 'idle' | 'running' | 'stopped' | 'error'
+
+export interface RobotStatus {
+  task_id: string
+  robot_type: string
+  state: RobotState
+  signals_in?: number
+  signals_out?: number
+  last_error?: string | null
+  started_at?: string | null
+  updated_at?: string | null
+  timestamp?: string
+  heartbeat?: boolean
+  metrics?: Record<string, unknown> | null
+  [key: string]: unknown
+}
+
+export interface RobotStatusEventData {
+  task_id: string
+  robot_type: string
+  state: RobotState
+  last_error?: string | null
+  timestamp: string
+  heartbeat?: boolean
+  [key: string]: unknown
+}
