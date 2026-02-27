@@ -113,9 +113,11 @@ async def _stream_events(
     # 发送 subscribed 事件
     yield _format_sse("subscribed", {"task_id": task_id, "mode": "streams_v2"})
 
-    # 从 snapshot key 推送 polymarket_info（静态数据，不再依赖 stream）
+    # 先回放关键 snapshot（新连接时不必等待下一条增量）
     info_key = Channels.task_snapshot(task_id, "polymarket_info")
+    book_key = Channels.task_snapshot(task_id, "polymarket_book")
     info_sent = False
+    book_sent = False
     try:
         info_raw = await redis.get(info_key)
         if info_raw:
@@ -125,6 +127,16 @@ async def _stream_events(
                 info_sent = True
     except Exception as exc:
         logger.warning("SSE Bridge 读取 polymarket_info snapshot 失败: {}", exc)
+
+    try:
+        book_raw = await redis.get(book_key)
+        if book_raw:
+            book_data = json.loads(book_raw)
+            if isinstance(book_data, dict):
+                yield _format_sse("polymarket_book", book_data)
+                book_sent = True
+    except Exception as exc:
+        logger.warning("SSE Bridge 读取 polymarket_book snapshot 失败: {}", exc)
 
     heartbeat_counter = 0
     try:
@@ -150,6 +162,17 @@ async def _stream_events(
                         if isinstance(info_data, dict):
                             yield _format_sse("polymarket_info", info_data)
                             info_sent = True
+                except Exception:
+                    pass
+
+            if not book_sent:
+                try:
+                    book_raw = await redis.get(book_key)
+                    if book_raw:
+                        book_data = json.loads(book_raw)
+                        if isinstance(book_data, dict):
+                            yield _format_sse("polymarket_book", book_data)
+                            book_sent = True
                 except Exception:
                     pass
 

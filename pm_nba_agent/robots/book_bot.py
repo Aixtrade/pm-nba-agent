@@ -103,7 +103,7 @@ class BookBot(BaseRobot):
                 if self._drop_stale_updates:
                     message = self._take_latest_message(queue, message)
 
-                if not isinstance(message, dict):
+                if not isinstance(message, dict) or not _is_book_payload(message):
                     continue
 
                 # 标准化字段名: buys->bids, sells->asks
@@ -117,6 +117,8 @@ class BookBot(BaseRobot):
 
     async def _emit_book_event(self, signal_type: SignalType, payload: dict[str, Any]) -> None:
         """发送 polymarket_book 到 BOOK stream，按配置裁剪历史长度。"""
+        # 与 v1 行为保持一致：缓存最近一条订单簿，供新订阅者立即回放
+        await self.save_snapshot("polymarket_book", payload)
         await self.emit(
             StreamName.BOOK,
             signal_type,
@@ -128,21 +130,21 @@ class BookBot(BaseRobot):
     def _take_latest_message(self, queue: asyncio.Queue[Any], message: Any) -> Any:
         """在高频场景下仅保留较新的消息，降低排队延迟。"""
         latest = message
-        latest_dict = message if isinstance(message, dict) else None
+        latest_book = message if isinstance(message, dict) and _is_book_payload(message) else None
         backlog = queue.qsize()
         if backlog <= 0:
-            return latest_dict if latest_dict is not None else latest
+            return latest_book if latest_book is not None else latest
 
         # 使用 qsize 快照，避免生产者持续写入导致长时间占用事件循环。
         to_drain = backlog if self._max_stale_drain == 0 else min(backlog, self._max_stale_drain)
         for _ in range(to_drain):
             try:
                 latest = queue.get_nowait()
-                if isinstance(latest, dict):
-                    latest_dict = latest
+                if isinstance(latest, dict) and _is_book_payload(latest):
+                    latest_book = latest
             except asyncio.QueueEmpty:
                 break
-        return latest_dict if latest_dict is not None else latest
+        return latest_book if latest_book is not None else latest
 
 
 def _collect_asset_ids(event_info: EventInfo) -> list[str]:
@@ -186,3 +188,24 @@ def _normalize_book_message(message: dict[str, Any]) -> dict[str, Any]:
         payload["price_changes"] = normalized_changes
 
     return payload
+
+
+def _is_book_payload(payload: dict[str, Any]) -> bool:
+    """判断消息是否为订单簿更新。"""
+    event_type = str(payload.get("event_type", "")).strip().lower()
+    if event_type:
+        return event_type in {"book", "price_change"}
+
+    if "price_changes" in payload:
+        price_changes = payload.get("price_changes")
+        return isinstance(price_changes, list) and len(price_changes) > 0
+
+    has_asset = any(
+        payload.get(key)
+        for key in ("asset_id", "assetId", "token_id", "tokenId")
+    )
+    has_levels = any(
+        isinstance(payload.get(key), list)
+        for key in ("bids", "asks", "buys", "sells")
+    )
+    return bool(has_asset and has_levels)

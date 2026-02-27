@@ -117,15 +117,63 @@ class PolymarketBookStream:
         return api_key, api_secret, api_passphrase
 
     async def _handle_message(self, message: Any) -> None:
-        if isinstance(message, dict):
-            event_type = str(message.get("event_type", "")).lower()
-            if event_type and event_type not in {"book", "price_change"}:
-                logger.debug("忽略非 book/price_change 消息: {}", event_type)
-                return
-        await self._queue.put(message)
+        payloads = _extract_book_payloads(message)
+        for payload in payloads:
+            await self._queue.put(payload)
 
     def _handle_error(self, error: Exception) -> None:
         logger.error("Polymarket WebSocket 错误: {}", error)
 
     def _handle_close(self) -> None:
         logger.info("Polymarket WebSocket 连接已关闭")
+
+
+def _extract_book_payloads(message: Any) -> list[dict[str, Any]]:
+    """从 WebSocket 消息中提取可消费的订单簿 payload。"""
+    payloads: list[dict[str, Any]] = []
+
+    def _try_collect(value: Any) -> None:
+        if isinstance(value, dict):
+            if _is_book_payload(value):
+                payloads.append(value)
+                return
+
+            # 兼容包装结构：{"data": {...}} / {"payload": {...}} 等
+            for key in ("data", "payload", "message"):
+                nested = value.get(key)
+                if isinstance(nested, dict) and _is_book_payload(nested):
+                    payloads.append(nested)
+                elif isinstance(nested, list):
+                    for item in nested:
+                        if isinstance(item, dict) and _is_book_payload(item):
+                            payloads.append(item)
+            return
+
+        if isinstance(value, list):
+            for item in value:
+                _try_collect(item)
+
+    _try_collect(message)
+    return payloads
+
+
+def _is_book_payload(payload: dict[str, Any]) -> bool:
+    """判断消息是否为订单簿更新。"""
+    event_type = str(payload.get("event_type", "")).strip().lower()
+    if event_type:
+        return event_type in {"book", "price_change"}
+
+    # 部分消息不带 event_type，使用字段结构判断
+    if "price_changes" in payload:
+        price_changes = payload.get("price_changes")
+        return isinstance(price_changes, list) and len(price_changes) > 0
+
+    has_asset = any(
+        payload.get(key)
+        for key in ("asset_id", "assetId", "token_id", "tokenId")
+    )
+    has_levels = any(
+        isinstance(payload.get(key), list)
+        for key in ("bids", "asks", "buys", "sells")
+    )
+    return bool(has_asset and has_levels)
