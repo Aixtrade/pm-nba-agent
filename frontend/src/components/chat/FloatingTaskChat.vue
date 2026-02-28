@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue"
 import { useAuthStore, useChatStore, useToastStore } from "@/stores"
 import { sendChatStream } from "@/services/agentChatService"
+import nanoClawAvatar from "@/assets/avatar/nanoclaw.jpeg"
 
 const props = defineProps<{
   taskId: string
@@ -40,7 +41,7 @@ function messageClass(role: string): string {
 function senderLabel(role: string): string {
   if (role === "user") return "我"
   if (role === "error") return "系统"
-  return "Agent"
+  return "NanoClaw"
 }
 
 function scrollToBottom() {
@@ -150,15 +151,16 @@ onBeforeUnmount(() => {
       v-if="!isOpen"
       class="btn btn-primary rounded-full shadow-lg task-chat__fab"
       @click="handleToggle"
+      aria-label="打开 NanoClaw 聊天"
     >
-      Agent
+      <img :src="nanoClawAvatar" alt="NanoClaw" class="task-chat__fab-avatar" />
     </button>
 
     <section v-else class="task-chat__panel card border border-base-200 bg-base-100 shadow-2xl">
       <header class="task-chat__header">
         <div>
           <h3 class="text-sm font-semibold">任务聊天</h3>
-          <p class="text-xs text-base-content/60">{{ props.taskId.slice(0, 8) }}</p>
+          <p class="text-xs text-base-content/60">NanoClaw · {{ props.taskId.slice(0, 8) }}</p>
         </div>
         <div class="flex items-center gap-2">
           <button class="btn btn-ghost btn-xs" :disabled="messages.length === 0" @click="handleClearSession">
@@ -170,7 +172,7 @@ onBeforeUnmount(() => {
 
       <div ref="messagesRef" class="task-chat__messages">
         <div v-if="messages.length === 0" class="text-sm text-base-content/55 text-center py-8">
-          发送问题，获取该任务的 Agent 回复
+          发送问题，获取该任务的 NanoClaw 回复
         </div>
 
         <div
@@ -192,7 +194,7 @@ onBeforeUnmount(() => {
         <textarea
           v-model="draft"
           class="textarea textarea-bordered w-full min-h-[68px] max-h-[160px]"
-          placeholder="输入要问 Agent 的内容..."
+          placeholder="输入要问 NanoClaw 的内容..."
           :disabled="isSending"
           @keydown.enter.exact.prevent="handleSend"
         />
@@ -215,6 +217,26 @@ onBeforeUnmount(() => {
 .task-chat__fab {
   min-width: 64px;
   height: 64px;
+  padding: 0;
+  overflow: hidden;
+  border: 2px solid rgba(255, 255, 255, 0.96);
+  box-shadow:
+    0 18px 34px rgba(2, 6, 23, 0.28),
+    0 6px 14px rgba(14, 165, 233, 0.32);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.task-chat__fab:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 24px 40px rgba(2, 6, 23, 0.34),
+    0 8px 16px rgba(14, 165, 233, 0.38);
+}
+
+.task-chat__fab-avatar {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .task-chat__panel {
@@ -222,6 +244,12 @@ onBeforeUnmount(() => {
   height: min(560px, calc(100vh - 1rem));
   display: grid;
   grid-template-rows: auto 1fr auto;
+  border: 1px solid rgba(15, 23, 42, 0.16);
+  box-shadow:
+    0 38px 64px rgba(2, 6, 23, 0.34),
+    0 14px 26px rgba(2, 6, 23, 0.2);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
 .task-chat__header {
