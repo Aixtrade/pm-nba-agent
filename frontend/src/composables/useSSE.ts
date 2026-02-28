@@ -1,13 +1,14 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { sseService } from '@/services/sseService'
 import { taskService } from '@/services/taskService'
-import { useAuthStore, useConnectionStore, useGameStore, useTaskStore, useToastStore } from '@/stores'
+import { useAuthStore, useChatStore, useConnectionStore, useGameStore, useTaskStore, useToastStore } from '@/stores'
 import type { CreateTaskRequest } from '@/types/task'
 
 export function useSSE() {
   const connectionStore = useConnectionStore()
   const gameStore = useGameStore()
   const authStore = useAuthStore()
+  const chatStore = useChatStore()
   const taskStore = useTaskStore()
   const toastStore = useToastStore()
 
@@ -129,6 +130,21 @@ export function useSSE() {
     },
     onTaskStatus: (data) => {
       taskStore.addTask(data)
+    },
+    onTaskChatOutput: (data) => {
+      const taskId = (data.task_id || '').trim()
+      const chatOutput = (data.chat_output || '').trim()
+      if (!taskId || !chatOutput) return
+
+      const groupId = `task:${taskId}`
+      chatStore.addMessage(
+        groupId,
+        taskId,
+        'assistant',
+        chatOutput,
+        false,
+        data.event_id,
+      )
     },
     onSubscribed: (data) => {
       taskStore.setCurrentTask(data.task_id)

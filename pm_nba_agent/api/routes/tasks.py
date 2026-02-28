@@ -35,6 +35,18 @@ def require_redis(request: Request) -> RedisClient:
     return redis
 
 
+def _normalize_webhook_task_id(chat_jid: str, group_folder: str) -> str:
+    """从 webhook 的 chatJid/groupFolder 归一化解析任务 ID。"""
+    for raw in (chat_jid, group_folder):
+        value = raw.strip()
+        if not value:
+            continue
+        if value.startswith("task-") and len(value) > len("task-"):
+            return value[len("task-") :]
+        return value
+    return ""
+
+
 async def _require_task_owner(
     redis: RedisClient, task_id: str, user_id: str
 ) -> TaskStatus:
@@ -352,14 +364,41 @@ def _attach_next_auto_trade_config_version(base: dict[str, Any], patch: dict[str
 
 @router.post("/completion/webhook", response_model=TaskCompletionWebhookResponse)
 async def receive_task_completion_webhook(
+    request: Request,
     payload: TaskCompletionWebhookPayload,
 ) -> TaskCompletionWebhookResponse:
-    """接收其他任务服务的完成回调。"""
-    task_id = payload.taskId.strip()
+    """接收其他任务服务的完成回调并写入任务聊天流。"""
+    redis = require_redis(request)
+    task_id = _normalize_webhook_task_id(payload.chatJid, payload.groupFolder)
+    if not task_id:
+        raise HTTPException(status_code=400, detail="无法从 chatJid/groupFolder 解析 task_id")
     logger.info("[task_completion_webhook] {}", payload.model_dump_json())
+
+    chat_output = payload.chatOutput.strip()
+    if chat_output:
+        stream_id = await redis.client.xadd(
+            Channels.task_chat_stream(task_id),
+            {
+                "task_id": task_id,
+                "chat_output": payload.chatOutput,
+                "timestamp": payload.runAt,
+            },
+            maxlen=1000,
+            approximate=True,
+        )
+        event_payload = {
+            "event_id": str(stream_id),
+            "task_id": task_id,
+            "chat_output": payload.chatOutput,
+            "timestamp": payload.runAt,
+        }
+        await redis.publish(
+            Channels.task_events(task_id),
+            f"event: task_chat_output\ndata: {json.dumps(event_payload, ensure_ascii=False)}\n\n",
+        )
 
     return TaskCompletionWebhookResponse(
         ok=True,
         task_id=task_id,
-        status_synced=False,
+        status_synced=True,
     )

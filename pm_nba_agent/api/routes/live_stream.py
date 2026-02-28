@@ -24,6 +24,7 @@ ACTIVE_TASK_STATES = {
 
 USER_STREAM_SYNC_INTERVAL_SECONDS = 2.0
 USER_STREAM_HEARTBEAT_SECONDS = 15.0
+TASK_CHAT_REPLAY_COUNT = 30
 
 
 def require_redis(request: Request) -> RedisClient:
@@ -91,6 +92,31 @@ def to_task_execution_payload(task_id: str, payload: dict[str, Any]) -> dict[str
         "error": payload.get("error"),
         "timestamp": str(payload.get("timestamp", now_iso())),
     }
+
+
+async def load_task_chat_replay_events(
+    redis: RedisClient,
+    task_id: str,
+    count: int = TASK_CHAT_REPLAY_COUNT,
+) -> list[str]:
+    """加载任务聊天流最近事件，并转换为 SSE 文本列表。"""
+    stream_key = Channels.task_chat_stream(task_id)
+    entries = await redis.client.xrevrange(stream_key, max="+", min="-", count=count)
+
+    events: list[str] = []
+    for stream_id, fields in reversed(entries):
+        chat_output = fields.get("chat_output")
+        if not chat_output:
+            continue
+        payload = {
+            "event_id": str(stream_id),
+            "task_id": str(fields.get("task_id") or task_id),
+            "chat_output": str(chat_output),
+            "timestamp": str(fields.get("timestamp") or now_iso()),
+        }
+        events.append(format_sse_event("task_chat_output", payload))
+
+    return events
 
 
 async def load_user_active_statuses(
@@ -163,6 +189,7 @@ async def subscribe_task(
     - `game_end`: 比赛结束
     - `task_status`: 任务状态更新事件
     - `task_end`: 任务结束事件
+    - `task_chat_output`: 任务聊天输出事件
 
     **示例请求**:
     ```bash
@@ -189,6 +216,9 @@ async def subscribe_task(
     # 如果任务已结束，返回最终状态
     if status.state in (TaskState.COMPLETED, TaskState.CANCELLED, TaskState.FAILED):
         async def final_event() -> AsyncGenerator[str, None]:
+            replay_events = await load_task_chat_replay_events(redis, task_id)
+            for replay_event in replay_events:
+                yield replay_event
             yield f'event: task_end\ndata: {{"task_id": "{task_id}", "state": "{status.state.value}"}}\n\n'
 
         return StreamingResponse(
@@ -230,6 +260,10 @@ async def subscribe_task(
                 snapshot_event = await redis.get(snapshot_key)
                 if snapshot_event:
                     yield normalize_sse_message(snapshot_event)
+
+            replay_events = await load_task_chat_replay_events(redis, task_id)
+            for replay_event in replay_events:
+                yield replay_event
 
             async for message in pubsub.listen():
                 # 检查客户端是否断开

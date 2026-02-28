@@ -161,6 +161,9 @@ export class SSEService {
         case 'task_status':
           this.handlers.onTaskStatus?.(parsed)
           break
+        case 'task_chat_output':
+          this.handlers.onTaskChatOutput?.(parsed)
+          break
         case 'subscribed':
           this.handlers.onSubscribed?.(parsed)
           break

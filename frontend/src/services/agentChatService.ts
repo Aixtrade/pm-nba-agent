@@ -42,6 +42,7 @@ function mapHttpError(status: number): string {
 
 export async function sendChatStream(params: SendChatStreamParams): Promise<void> {
   const { prompt, groupId, token, signal, onMessage, onDone, onErrorEvent } = params
+  let lastMessageText = ""
 
   await fetchEventSource(`${NANOCLAW_BASE_URL}/api/chat`, {
     method: "POST",
@@ -61,7 +62,25 @@ export async function sendChatStream(params: SendChatStreamParams): Promise<void
       if (event.event === "message") {
         const payload = parseJSONPayload<MessageEventPayload>(event.data)
         if (payload?.text) {
-          onMessage(payload.text)
+          const incoming = payload.text
+
+          // 兼容后端可能返回“累计文本”而非“增量文本”的流式协议。
+          if (incoming === lastMessageText) {
+            return
+          }
+
+          if (incoming.startsWith(lastMessageText)) {
+            const delta = incoming.slice(lastMessageText.length)
+            if (delta) {
+              onMessage(delta)
+            }
+            lastMessageText = incoming
+            return
+          }
+
+          // 回退：若无法判定累计关系，按原样追加。
+          onMessage(incoming)
+          lastMessageText = incoming
         }
         return
       }

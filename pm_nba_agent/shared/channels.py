@@ -42,9 +42,9 @@ class Channels:
         return f"{cls.PREFIX}:user:{user_id}:tasks"
 
     @classmethod
-    def task_completion_webhook(cls, task_id: str) -> str:
-        """任务完成 webhook 回调原始数据 Key"""
-        return f"{cls.PREFIX}:task:{task_id}:completion_webhook"
+    def task_chat_stream(cls, task_id: str) -> str:
+        """任务聊天输出 Stream Key"""
+        return f"{cls.PREFIX}:task:{task_id}:chat:stream"
 
     @classmethod
     def parse_task_id(cls, channel: str) -> str | None:

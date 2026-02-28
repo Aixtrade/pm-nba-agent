@@ -4,7 +4,12 @@ import type { ChatMessage, ChatRole, ChatSession } from "@/types/chat"
 
 type SessionMap = Record<string, ChatSession>
 
-function createMessage(role: ChatRole, content: string, isStreaming = false): ChatMessage {
+function createMessage(
+  role: ChatRole,
+  content: string,
+  isStreaming = false,
+  sourceEventId?: string,
+): ChatMessage {
   const random = Math.random().toString(36).slice(2, 8)
   return {
     id: `${Date.now()}-${random}`,
@@ -12,6 +17,7 @@ function createMessage(role: ChatRole, content: string, isStreaming = false): Ch
     content,
     createdAt: new Date().toISOString(),
     isStreaming,
+    sourceEventId,
   }
 }
 
@@ -38,6 +44,7 @@ export const useChatStore = defineStore("chat", () => {
       groupId,
       taskId,
       messages: [],
+      unreadCount: 0,
       lastSessionId: null,
       updatedAt: new Date().toISOString(),
     }
@@ -72,10 +79,21 @@ export const useChatStore = defineStore("chat", () => {
     role: ChatRole,
     content: string,
     isStreaming = false,
+    sourceEventId?: string,
   ): string {
     const session = ensureSession(groupId, taskId)
-    const message = createMessage(role, content, isStreaming)
+    if (sourceEventId) {
+      const existing = session.messages.find((message) => message.sourceEventId === sourceEventId)
+      if (existing) {
+        return existing.id
+      }
+    }
+
+    const message = createMessage(role, content, isStreaming, sourceEventId)
     session.messages.push(message)
+    if (role !== "user" && !(isOpen.value && activeGroupId.value === groupId)) {
+      session.unreadCount += 1
+    }
     session.updatedAt = new Date().toISOString()
     return message.id
   }
@@ -115,9 +133,17 @@ export const useChatStore = defineStore("chat", () => {
       groupId,
       taskId,
       messages: [],
+      unreadCount: 0,
       lastSessionId: null,
       updatedAt: new Date().toISOString(),
     }
+  }
+
+  function markGroupRead(groupId: string, taskId: string) {
+    const session = ensureSession(groupId, taskId)
+    if (session.unreadCount === 0) return
+    session.unreadCount = 0
+    session.updatedAt = new Date().toISOString()
   }
 
   return {
@@ -135,5 +161,6 @@ export const useChatStore = defineStore("chat", () => {
     finishMessage,
     setSessionId,
     clearSession,
+    markGroupRead,
   }
 })

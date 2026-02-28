@@ -22,6 +22,8 @@ const isOpen = computed(() => chatStore.isOpen)
 const isSending = computed(() => chatStore.sendingGroupId === groupId.value)
 const session = computed(() => chatStore.sessions[groupId.value] || null)
 const messages = computed(() => session.value?.messages || [])
+const unreadCount = computed(() => session.value?.unreadCount || 0)
+const hasUnread = computed(() => unreadCount.value > 0)
 
 function formatTime(value: string): string {
   const date = new Date(value)
@@ -113,6 +115,9 @@ async function handleSend() {
 function handleToggle() {
   const nextState = !chatStore.isOpen
   chatStore.setOpen(nextState)
+  if (nextState) {
+    chatStore.markGroupRead(groupId.value, props.taskId)
+  }
 }
 
 function handleClearSession() {
@@ -126,12 +131,16 @@ watch(
   () => props.taskId,
   (taskId) => {
     chatStore.setActiveGroup(`task:${taskId}`, taskId)
+    if (chatStore.isOpen) {
+      chatStore.markGroupRead(`task:${taskId}`, taskId)
+    }
   },
   { immediate: true },
 )
 
 watch([messages, isOpen], async () => {
   if (!isOpen.value) return
+  chatStore.markGroupRead(groupId.value, props.taskId)
   await nextTick()
   scrollToBottom()
 })
@@ -154,6 +163,7 @@ onBeforeUnmount(() => {
       aria-label="打开 NanoClaw 聊天"
     >
       <img :src="nanoClawAvatar" alt="NanoClaw" class="task-chat__fab-avatar" />
+      <span v-if="hasUnread" class="task-chat__badge" aria-hidden="true"></span>
     </button>
 
     <section v-else class="task-chat__panel card border border-base-200 bg-base-100 shadow-2xl">
@@ -237,6 +247,18 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.task-chat__badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: #ef4444;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.25);
 }
 
 .task-chat__panel {

@@ -228,6 +228,13 @@ export interface PositionStateEventData {
   timestamp: string
 }
 
+export interface TaskChatOutputEventData {
+  event_id?: string
+  task_id: string
+  chat_output: string
+  timestamp: string
+}
+
 // SSE 事件类型
 export type SSEEventType =
   | 'scoreboard'
@@ -242,6 +249,7 @@ export type SSEEventType =
   | 'game_end'
   | 'task_status'
   | 'task_end'
+  | 'task_chat_output'
   | 'subscribed'
   | 'auto_buy_state'
   | 'auto_trade_state'
@@ -267,6 +275,7 @@ export interface SSEEventHandlers {
   onAutoSellState?: (data: AutoSellStateEventData) => void
   onAutoSellExecution?: (data: AutoSellExecutionEventData) => void
   onPositionState?: (data: PositionStateEventData) => void
+  onTaskChatOutput?: (data: TaskChatOutputEventData) => void
   onOpen?: () => void
   onClose?: () => void
 }
