@@ -83,6 +83,7 @@ class TaskCompletionWebhookPayload(BaseModel):
     status: str = Field(..., min_length=1)
     success: bool
     resultSummary: str = Field(default="")
+    chatOutput: str = Field(default="")
     error: str | None = None
 
 
