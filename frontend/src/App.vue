@@ -2,10 +2,29 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import AppHeader from '@/components/common/AppHeader.vue'
+import FloatingTaskChat from '@/components/chat/FloatingTaskChat.vue'
 import GlobalToast from '@/components/common/GlobalToast.vue'
+import { useTaskStore } from '@/stores'
 
 const route = useRoute()
+const taskStore = useTaskStore()
 const showHeader = computed(() => route.name !== 'login')
+
+const activeTaskId = computed(() => {
+  if (route.name !== 'monitor') return null
+
+  const taskIdFromQuery = typeof route.query.task_id === 'string'
+    ? route.query.task_id.trim()
+    : ''
+
+  if (taskIdFromQuery) {
+    return taskIdFromQuery
+  }
+
+  return taskStore.currentTaskId
+})
+
+const showTaskChat = computed(() => route.name === 'monitor' && !!activeTaskId.value)
 </script>
 
 <template>
@@ -18,6 +37,10 @@ const showHeader = computed(() => route.name !== 'login')
     <main class="flex-1 w-full app-main" :class="showHeader ? 'px-4 py-6' : 'p-0'">
       <RouterView />
     </main>
+    <FloatingTaskChat
+      v-if="showTaskChat && activeTaskId"
+      :task-id="activeTaskId"
+    />
   </div>
 </template>
 
