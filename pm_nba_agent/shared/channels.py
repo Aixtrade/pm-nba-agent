@@ -42,6 +42,11 @@ class Channels:
         return f"{cls.PREFIX}:user:{user_id}:tasks"
 
     @classmethod
+    def task_completion_webhook(cls, task_id: str) -> str:
+        """任务完成 webhook 回调原始数据 Key"""
+        return f"{cls.PREFIX}:task:{task_id}:completion_webhook"
+
+    @classmethod
     def parse_task_id(cls, channel: str) -> str | None:
         """从 Channel 名称解析 task_id"""
         prefix = f"{cls.PREFIX}:task:"

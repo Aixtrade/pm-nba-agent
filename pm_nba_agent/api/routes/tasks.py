@@ -5,8 +5,18 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from loguru import logger
 
+from ..models.task_models import (
+    CreateTaskRequest,
+    UpdateTaskConfigRequest,
+    CreateTaskResponse,
+    TaskStatusResponse,
+    TaskListResponse,
+    TaskConfigResponse,
+    TaskCompletionWebhookPayload,
+    TaskCompletionWebhookResponse,
+)
 from ..services.auth import require_auth
 from ...shared import Channels, RedisClient, TaskConfig, TaskState, TaskStatus
 
@@ -38,70 +48,6 @@ async def _require_task_owner(
     if status.user_id and status.user_id != user_id:
         raise HTTPException(status_code=404, detail="任务不存在")
     return status
-
-
-class CreateTaskRequest(BaseModel):
-    """创建任务请求"""
-
-    url: str = Field(..., description="Polymarket 事件 URL")
-    poll_interval: float = Field(default=10.0, ge=5.0, le=60.0)
-    include_scoreboard: bool = Field(default=True)
-    include_boxscore: bool = Field(default=True)
-    enable_analysis: bool = Field(default=True)
-    analysis_interval: float = Field(default=30.0, ge=10.0, le=120.0)
-    strategy_ids: list[str] | None = Field(default=None)
-    strategy_params_map: dict[str, dict[str, Any]] | None = Field(default=None)
-    strategy_id: str = Field(default="merge_long")
-    strategy_params: dict[str, Any] = Field(default_factory=dict)
-    enable_trading: bool = Field(default=False)
-    execution_mode: str = Field(default="SIMULATION")
-    order_type: str = Field(default="GTC")
-    order_expiration: str | None = Field(default=None)
-    min_order_amount: float = Field(default=1.0, ge=0.0)
-    trade_cooldown_seconds: float = Field(default=0.0, ge=0.0)
-    private_key: str | None = Field(default=None)
-    proxy_address: str | None = Field(default=None)
-    auto_buy: dict[str, Any] | None = Field(default=None)
-    auto_sell: dict[str, Any] | None = Field(default=None)
-    auto_trade: dict[str, Any] | None = Field(default=None)
-
-
-class UpdateTaskConfigRequest(BaseModel):
-    """更新任务配置请求"""
-
-    patch: dict[str, Any] = Field(default_factory=dict)
-
-
-class CreateTaskResponse(BaseModel):
-    """创建任务响应"""
-
-    task_id: str
-    status: str
-
-
-class TaskStatusResponse(BaseModel):
-    """任务状态响应"""
-
-    task_id: str
-    state: str
-    created_at: str
-    updated_at: str
-    game_id: str | None = None
-    error: str | None = None
-    home_team: str | None = None
-    away_team: str | None = None
-
-
-class TaskListResponse(BaseModel):
-    """任务列表响应"""
-
-    tasks: list[TaskStatusResponse]
-
-
-class TaskConfigResponse(BaseModel):
-    """任务配置响应"""
-
-    config: dict[str, Any]
 
 
 SNAPSHOT_EVENT_NAMES = [
@@ -402,3 +348,18 @@ def _attach_next_auto_trade_config_version(base: dict[str, Any], patch: dict[str
     current_version = int(base_auto_trade.get("config_version", 0))
     next_version = max(0, current_version) + 1
     return _deep_merge_dict(patch, {"auto_trade": {"config_version": next_version}})
+
+
+@router.post("/completion/webhook", response_model=TaskCompletionWebhookResponse)
+async def receive_task_completion_webhook(
+    payload: TaskCompletionWebhookPayload,
+) -> TaskCompletionWebhookResponse:
+    """接收其他任务服务的完成回调。"""
+    task_id = payload.taskId.strip()
+    logger.info("[task_completion_webhook] {}", payload.model_dump_json())
+
+    return TaskCompletionWebhookResponse(
+        ok=True,
+        task_id=task_id,
+        status_synced=False,
+    )
