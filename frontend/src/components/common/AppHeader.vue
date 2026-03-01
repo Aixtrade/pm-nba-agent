@@ -88,6 +88,10 @@ async function handleCancelTask(taskId: string) {
   }
 
   try {
+    if (isCurrentTask) {
+      void sendStopScheduledTasksCommand(taskId)
+    }
+
     if (!TERMINAL_STATES.includes(task.state)) {
       if (task.state !== 'cancelling') {
         await taskService.cancelTask(taskId, authStore.token)
@@ -142,8 +146,8 @@ function resolveActiveTaskId(): string | null {
   return taskStore.currentTaskId
 }
 
-async function sendStopScheduledTasksCommand(): Promise<void> {
-  const taskId = resolveActiveTaskId()
+async function sendStopScheduledTasksCommand(preferredTaskId?: string): Promise<void> {
+  const taskId = preferredTaskId || resolveActiveTaskId()
   if (!taskId || !authStore.token) return
 
   const groupId = `task:${taskId}`
