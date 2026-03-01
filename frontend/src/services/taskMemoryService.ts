@@ -1,4 +1,4 @@
-const NANOCLAW_BASE_URL = import.meta.env.VITE_NANOCLAW_BASE_URL || "http://localhost:3100"
+const NANOCLAW_BASE_URL = import.meta.env.VITE_NANOCLAW_BASE_URL ?? ""
 
 export interface UpdateGroupMemoryResponse {
   status: string
