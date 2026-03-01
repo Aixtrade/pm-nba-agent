@@ -75,6 +75,46 @@ function parseNbaEventFromUrl(url: string): {
   }
 }
 
+function findStringField(
+  source: Record<string, unknown> | null | undefined,
+  keys: string[],
+): string {
+  if (!source) return ""
+  for (const key of keys) {
+    const value = source[key]
+    if (typeof value === "string" && value.trim()) {
+      return value.trim()
+    }
+  }
+  return ""
+}
+
+function resolveGameStartAtUtc(polymarketInfo: PolymarketInfoEventData | null): string {
+  if (!polymarketInfo) return ""
+
+  const fromEventData = findStringField(polymarketInfo.event_data || null, [
+    "startDate",
+    "start_date",
+    "startTime",
+    "start_time",
+    "gameStartTime",
+    "game_start_time",
+  ])
+  if (fromEventData) return fromEventData
+
+  const fromMarketInfo = findStringField(polymarketInfo.market_info?.raw_data || null, [
+    "startDate",
+    "start_date",
+    "startTime",
+    "start_time",
+    "gameStartTime",
+    "game_start_time",
+  ])
+  if (fromMarketInfo) return fromMarketInfo
+
+  return ""
+}
+
 function buildTaskMemoryContent(
   taskId: string,
   taskConfig: Record<string, unknown>,
@@ -87,6 +127,7 @@ function buildTaskMemoryContent(
   const title = polymarketInfo?.title || ""
   const conditionId = polymarketInfo?.condition_id || polymarketInfo?.market_info?.condition_id || ""
   const marketSlug = polymarketInfo?.market_info?.slug || polymarketInfo?.tokens?.[0]?.market_slug || ""
+  const gameStartAtUtc = resolveGameStartAtUtc(polymarketInfo)
 
   const tokenLines = (polymarketInfo?.tokens || []).map((token) => {
     const side = inferSide(token.outcome)
@@ -104,7 +145,9 @@ function buildTaskMemoryContent(
     "## Task Overview",
     `- domain: ${urlSummary.sport} sports match`,
     `- teams: ${urlSummary.teams}`,
-    `- game_date: ${urlSummary.gameDate}`,
+    `- game_date_slug: ${urlSummary.gameDate}`,
+    `- game_date_timezone_assumption: America/New_York (inferred from NBA/Polymarket naming convention)`,
+    `- game_start_at_utc: ${gameStartAtUtc || "(pending from polymarket payload)"}`,
     `- event_slug: ${urlSummary.slug}`,
     `- task_url: ${taskUrl || "(pending)"}`,
     "",

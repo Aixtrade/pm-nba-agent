@@ -47,7 +47,7 @@ function formatTime(value: string): string {
 function messageClass(role: string): string {
   if (role === "user") return "chat-bubble chat-bubble-primary"
   if (role === "error") return "chat-bubble chat-bubble-error"
-  return "chat-bubble chat-bubble-neutral"
+  return "chat-bubble"
 }
 
 function senderLabel(role: string): string {
@@ -219,7 +219,10 @@ onBeforeUnmount(() => {
           <div class="chat-header mb-1 text-[11px] text-base-content/55">
             {{ senderLabel(message.role) }} · {{ formatTime(message.createdAt) }}
           </div>
-          <div class="chat-bubble task-chat__bubble" :class="messageClass(message.role)">
+          <div
+            class="chat-bubble task-chat__bubble"
+            :class="[messageClass(message.role), message.role === 'assistant' ? 'task-chat__bubble-assistant' : '']"
+          >
             <span class="whitespace-pre-wrap break-words">{{ message.content || (message.isStreaming ? '...' : '') }}</span>
           </div>
         </div>
@@ -287,8 +290,10 @@ onBeforeUnmount(() => {
 }
 
 .task-chat__panel {
-  width: min(390px, calc(100vw - 1rem));
+  width: min(460px, calc(100vw - 1rem));
   height: min(560px, calc(100vh - 1rem));
+  border-radius: 1rem;
+  overflow: hidden;
   display: grid;
   grid-template-rows: auto 1fr auto;
   border: 1px solid rgba(15, 23, 42, 0.16);
@@ -313,6 +318,7 @@ onBeforeUnmount(() => {
 
 .task-chat__messages {
   overflow-y: auto;
+  overflow-x: visible;
   padding: 0.75rem;
   display: flex;
   flex-direction: column;
@@ -322,6 +328,13 @@ onBeforeUnmount(() => {
 
 .task-chat__bubble {
   max-width: 90%;
+  position: relative;
+  overflow: visible;
+}
+
+.task-chat__bubble-assistant {
+  background: #efefef;
+  color: #0f172a;
 }
 
 .task-chat__footer {

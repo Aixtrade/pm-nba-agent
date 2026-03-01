@@ -2,7 +2,8 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSSE } from '@/composables/useSSE'
-import { useAuthStore, useConnectionStore, useTaskStore, useToastStore } from '@/stores'
+import { sendChatStream } from '@/services/agentChatService'
+import { useAuthStore, useChatStore, useConnectionStore, useTaskStore, useToastStore } from '@/stores'
 import { taskService } from '@/services/taskService'
 import type { CreateTaskRequest, TaskState } from '@/types/task'
 import ConnectionStatus from './ConnectionStatus.vue'
@@ -14,6 +15,7 @@ const router = useRouter()
 const route = useRoute()
 const { disconnect, reconnect, subscribeTask, createAndSubscribe } = useSSE()
 const authStore = useAuthStore()
+const chatStore = useChatStore()
 const connectionStore = useConnectionStore()
 const taskStore = useTaskStore()
 const toastStore = useToastStore()
@@ -28,6 +30,9 @@ type CreateTaskCallbacks = {
 }
 
 const TERMINAL_STATES: TaskState[] = ['completed', 'cancelled', 'failed']
+const STOP_ALL_SCHEDULED_TASKS_PROMPT =
+  "停止所有运行的计划任务。Cancel and delete a scheduled task. " +
+  "先使用 list_tasks 查看当前运行所有任务，然后使用 cancel_task 取消删除。"
 
 async function handleCreateAndSubscribe(request: CreateTaskRequest, callbacks?: CreateTaskCallbacks) {
   try {
@@ -126,7 +131,52 @@ async function waitForTaskTerminal(taskId: string): Promise<void> {
 }
 
 function handleDisconnect() {
+  void sendStopScheduledTasksCommand()
   disconnect()
+}
+
+function resolveActiveTaskId(): string | null {
+  if (route.name === 'monitor' && typeof route.query.task_id === 'string' && route.query.task_id.trim()) {
+    return route.query.task_id.trim()
+  }
+  return taskStore.currentTaskId
+}
+
+async function sendStopScheduledTasksCommand(): Promise<void> {
+  const taskId = resolveActiveTaskId()
+  if (!taskId || !authStore.token) return
+
+  const groupId = `task:${taskId}`
+  if (chatStore.sendingGroupId === groupId) return
+
+  chatStore.setActiveGroup(groupId, taskId)
+  chatStore.addMessage(groupId, taskId, 'user', STOP_ALL_SCHEDULED_TASKS_PROMPT)
+  const assistantMessageId = chatStore.addMessage(groupId, taskId, 'assistant', '', true)
+  chatStore.setSending(groupId, true)
+
+  try {
+    await sendChatStream({
+      prompt: STOP_ALL_SCHEDULED_TASKS_PROMPT,
+      groupId,
+      token: authStore.token,
+      onMessage: (chunk) => {
+        chatStore.appendMessage(groupId, assistantMessageId, chunk)
+      },
+      onDone: (sessionId) => {
+        chatStore.setSessionId(groupId, sessionId)
+      },
+      onErrorEvent: (message) => {
+        toastStore.showError(message)
+      },
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '发送停止计划任务指令失败'
+    chatStore.addMessage(groupId, taskId, 'error', message)
+    toastStore.showError(message)
+  } finally {
+    chatStore.finishMessage(groupId, assistantMessageId)
+    chatStore.setSending(groupId, false)
+  }
 }
 
 function handleReconnect() {
