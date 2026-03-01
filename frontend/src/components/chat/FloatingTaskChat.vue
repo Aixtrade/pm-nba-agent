@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue"
-import { useAuthStore, useChatStore, useToastStore } from "@/stores"
+import { useAuthStore, useChatStore, useGameStore, useTaskMemoryStore, useToastStore } from "@/stores"
 import { sendChatStream } from "@/services/agentChatService"
 import nanoClawAvatar from "@/assets/avatar/nanoclaw.jpeg"
 
@@ -11,6 +11,8 @@ const props = defineProps<{
 const authStore = useAuthStore()
 const toastStore = useToastStore()
 const chatStore = useChatStore()
+const gameStore = useGameStore()
+const taskMemoryStore = useTaskMemoryStore()
 
 const draft = ref("")
 const messagesRef = ref<HTMLElement | null>(null)
@@ -24,6 +26,14 @@ const session = computed(() => chatStore.sessions[groupId.value] || null)
 const messages = computed(() => session.value?.messages || [])
 const unreadCount = computed(() => session.value?.unreadCount || 0)
 const hasUnread = computed(() => unreadCount.value > 0)
+const polymarketMemoryFingerprint = computed(() => {
+  const info = gameStore.polymarketInfo
+  if (!info) return ""
+  const tokenPart = info.tokens
+    .map((token) => `${token.token_id}:${token.outcome}:${token.market_slug}`)
+    .join("|")
+  return `${info.event_id}|${info.condition_id || ""}|${info.market_info?.slug || ""}|${tokenPart}`
+})
 
 function formatTime(value: string): string {
   const date = new Date(value)
@@ -134,8 +144,23 @@ watch(
     if (chatStore.isOpen) {
       chatStore.markGroupRead(`task:${taskId}`, taskId)
     }
+    void taskMemoryStore.ensureTaskMemorySynced(taskId).catch((error) => {
+      const message = error instanceof Error ? error.message : "任务记忆同步失败"
+      toastStore.showWarning(message)
+    })
   },
   { immediate: true },
+)
+
+watch(
+  polymarketMemoryFingerprint,
+  (value) => {
+    if (!value) return
+    void taskMemoryStore.ensureTaskMemorySynced(props.taskId).catch((error) => {
+      const message = error instanceof Error ? error.message : "任务记忆同步失败"
+      toastStore.showWarning(message)
+    })
+  },
 )
 
 watch([messages, isOpen], async () => {
