@@ -1,6 +1,6 @@
 import { fetchEventSource } from "@microsoft/fetch-event-source"
 
-const NANOCLAW_BASE_URL = import.meta.env.VITE_NANOCLAW_BASE_URL || "http://localhost:3100"
+const NANOCLAW_BASE_URL = import.meta.env.VITE_NANOCLAW_BASE_URL ?? ""
 
 interface SendChatStreamParams {
   prompt: string
